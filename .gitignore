@@ -1,0 +1,18 @@
+# 编译的临时文件
+*.o
+*.obj
+*.exe
+*.bin
+*.img
+*.iso
+*.elf
+
+# 汇编的临时文件
+*.lst
+*.map
+
+# 其他
+*.tmp
+*.log
+*.swp
+*.bak
