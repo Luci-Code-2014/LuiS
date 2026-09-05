@@ -1,4 +1,4 @@
-# 编译的临时文件
+# tmp file
 *.o
 *.obj
 *.exe
@@ -7,11 +7,11 @@
 *.iso
 *.elf
 
-# 汇编的临时文件
+# assembly tmp file
 *.lst
 *.map
 
-# 其他
+# other
 *.tmp
 *.log
 *.swp
