@@ -1,0 +1,8 @@
+# 编译产物
+*.bin
+*.img
+*.o
+*.elf
+
+# QEMU/GDB
+*.log
