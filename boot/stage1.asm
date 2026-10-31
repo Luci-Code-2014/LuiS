@@ -1,40 +1,37 @@
 [bits 16]
 [org 0x7c00]
 
-stage2_sectors equ 4      ; Stage2 占 4 个扇区
-stage2_addr    equ 0x7e00 ; Stage2 加载到内存的目标地址 (0x7c00 + 0x200)
+STAGE2_SECTORS equ 16
+STAGE2_ADDR    equ 0x7e00
 
 start:
-    cli                         ; 关闭中断
-    xor ax, ax                  ; ax = 0
-    mov ds, ax                  ; 数据段 (data segment) = 0
-    mov es, ax                  ; 附加段 (extra segment) = 0
-    mov ss, ax                  ; 栈段 (stack segment) = 0
+    cli
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
     mov sp, 0x7c00
-    sti                         ; 开中断
+    sti
 
-    mov [boot_drive], dl        ; BIOS 进入时 dl = 启动盘号
+    mov [boot_drive], dl
 
-    mov si, msg_stage1          ; si 指向字符串
-    call print                  ; 调用打印子程序
+    mov si, msg_stage1
+    call print
 
-    mov ah, 0x02                ; ah = 02 表示读扇区
-    mov al, stage2_sectors      ; 要读取的扇区数
-    mov ch, 0                   ; 柱面号 = 0
-    mov cl, 2                   ; 起始柱面号 = 2
-    mov dh, 0                   ; 磁头号
-    mov dl, [boot_drive]        ; 盘号
-    mov bx, stage2_addr         ; 目标偏移
-    int 0x13                    ; 调用 BIOS 磁盘中断
-    jc .disk_error              ; CF = 1 表示出错
+    ; ---- 使用 LBA 扩展读取 ----
+    mov si, dap
+    mov ah, 0x42
+    mov dl, [boot_drive]
+    int 0x13
+    jc .disk_error
 
-    jmp stage2_addr             ; 读取成功直接跳进 Stage2 执行
+    jmp STAGE2_ADDR
 
 .disk_error:
-    mov si, msg_err             ; 输出错误信息
+    mov si, msg_err
     call print
-    cli                         ; 关中断
-    hlt                         ; 停机
+    cli
+    hlt
     jmp $
 
 print:
@@ -50,13 +47,20 @@ print:
     popa
     ret
 
-; ===== 数据区 =====
-
+; ---- 数据区 ----
 boot_drive db 0
-msg_stage1 db "Stage1: Loading Stage2", 0x0d, 0x0a, 0
+msg_stage1 db "Stage1: Loading Stage2...", 0x0d, 0x0a, 0
 msg_err    db "Stage1: disk read error!", 0x0d, 0x0a, 0
 
-; ===== 填充 + 引导签名 =====
+; 磁盘地址包 (Disk Address Packet)
+align 4
+dap:
+    db 0x10                 ; 结构体大小
+    db 0x00                 ; 保留
+    dw STAGE2_SECTORS       ; 要读取的扇区数 (16)
+    dw STAGE2_ADDR          ; 目标偏移 (0x7e00)
+    dw 0x0000               ; 目标段基址 (0)
+    dq 1                    ; 起始 LBA 地址 (第 2 个扇区, LBA 从 0 开始算)
 
 times 510-($-$$) db 0
 dw 0xaa55
