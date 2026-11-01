@@ -1,15 +1,16 @@
 [bits 16]
 [org 0x7e00]
 
-CODE_SEG   equ gdt_code - gdt_start
-DATA_SEG   equ gdt_data - gdt_start
-CODE64_SEG equ gdt_code64 - gdt64_start
-DATA64_SEG equ gdt_data64 - gdt64_start
+CODE_SEG        equ gdt_code - gdt_start
+DATA_SEG        equ gdt_data - gdt_start
+CODE64_SEG      equ gdt_code64 - gdt64_start
+DATA64_SEG      equ gdt_data64 - gdt64_start
+KERNEL_SECTORS  equ 8
+KERNEL_LBA      equ 17
+KERNEL_ADDR     equ 0x10000      ; <- 改成 64KB 低地址
+KERNEL_DRIVE    equ 0x0500
 
 start:
-    mov si, msg_stage2
-    call print
-
     in al, 0x92
     test al, 2
     jnz .a20_on
@@ -18,10 +19,17 @@ start:
     out 0x92, al
 
 .a20_on:
-
     cli
     xor ax, ax
     mov ds, ax
+    mov es, ax
+
+    mov si, dap_kernel
+    mov dl, [KERNEL_DRIVE]
+    mov ah, 0x42
+    int 0x13
+    jc .kernel_error
+
     lgdt [gdt32_descriptor]
 
     mov eax, cr0
@@ -29,6 +37,13 @@ start:
     mov cr0, eax
 
     jmp CODE_SEG:init_32bit
+
+.kernel_error:
+    mov si, msg_kernel_err
+    call print
+    cli
+    hlt
+    jmp $
 
 print:
     pusha
@@ -65,7 +80,16 @@ gdt32_descriptor:
     dw gdt_end - gdt_start - 1
     dd gdt_start
 
-msg_stage2 db "Stage2: entering protected mode ...", 0x0d, 0x0a, 0
+msg_kernel_err db "Stage2: kernel disk read error!", 0x0d, 0x0a, 0
+
+align 4
+dap_kernel:
+    db 0x10
+    db 0x00
+    dw KERNEL_SECTORS
+    dw 0x0000                ; 偏移 0x0000
+    dw 0x1000                ; 段 0x1000 -> 0x1000*16 + 0x0 = 0x10000
+    dq KERNEL_LBA
 
 [bits 32]
 init_32bit:
@@ -125,14 +149,12 @@ init_32bit:
     or eax, 1 << 8
     wrmsr
 
-    ; 确保在开启分页前加载 GDT64
     lgdt [gdt64_descriptor]
 
     mov eax, cr0
     or eax, 1 << 31
     mov cr0, eax
 
-    ; 最标准可靠的远跳转
     jmp CODE64_SEG:init_64bit
 
 .no_long_mode:
@@ -159,32 +181,22 @@ gdt64_end:
 
 gdt64_descriptor:
     dw gdt64_end - gdt64_start - 1
-    dq gdt64_start   ; 64 位下 lgdt 读 10 字节, 必须 dq
+    dq gdt64_start
 
 [bits 64]
 init_64bit:
-    ; 进入64位第一件事：设置栈
     mov ax, DATA64_SEG
     mov ss, ax
     mov rsp, 0x90000
-
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
 
     cld
-    mov rsi, msg_stage64
-.print64:
-    lodsb
-    test al, al
-    jz .done64
-    mov dx, 0x3F8
-    out dx, al
-    jmp .print64
-.done64:
-    jmp $
 
-msg_stage64 db 0x0a, "Stage2: SUCCESS: LuiS is now in 64-bit Long Mode!", 0x0d, 0x0a, 0
+    ; ---- 跳转 Kernel ----
+    mov rax, KERNEL_ADDR
+    jmp rax
 
 times (16 * 512) - ($ - $$) db 0
