@@ -11,8 +11,13 @@ start:
     call print
 
     in al, 0x92
+    test al, 2
+    jnz .a20_on
     or al, 2
+    and al, 0x0FE
     out 0x92, al
+
+.a20_on:
 
     cli
     xor ax, ax
@@ -85,25 +90,28 @@ init_32bit:
     mov edi, 0x1000
     mov cr3, edi
     xor eax, eax
-    mov ecx, 12288
+    mov ecx, 3072
     cld
-    rep stosb
+    rep stosd
 
     mov edi, 0x1000
     mov eax, 0x2000
     or eax, 0x03
-    mov [edi], eax
+    mov dword [edi], eax
+    mov dword [edi+4], 0
 
     mov edi, 0x2000
     mov eax, 0x3000
     or eax, 0x03
-    mov [edi], eax
+    mov dword [edi], eax
+    mov dword [edi+4], 0
 
     mov edi, 0x3000
     mov eax, 0x83
     mov ecx, 512
 .loop_pd:
-    mov [edi], eax
+    mov dword [edi], eax
+    mov dword [edi+4], 0
     add eax, 0x200000
     add edi, 8
     loop .loop_pd
@@ -151,7 +159,7 @@ gdt64_end:
 
 gdt64_descriptor:
     dw gdt64_end - gdt64_start - 1
-    dd gdt64_start   ; 在32位段加载时，用dd只占4字节
+    dq gdt64_start   ; 64 位下 lgdt 读 10 字节, 必须 dq
 
 [bits 64]
 init_64bit:
@@ -177,6 +185,6 @@ init_64bit:
 .done64:
     jmp $
 
-msg_stage64 db "SUCCESS: LuiS is now in 64-bit Long Mode!", 0x0d, 0x0a, 0
+msg_stage64 db 0x0a, "Stage2: SUCCESS: LuiS is now in 64-bit Long Mode!", 0x0d, 0x0a, 0
 
 times (16 * 512) - ($ - $$) db 0
