@@ -14,11 +14,8 @@ start:
     sti
 
     mov [boot_drive], dl
+    mov [0x0500], dl            ; 给 stage2 传盘号
 
-    mov si, msg_stage1
-    call print
-
-    ; ---- 使用 LBA 扩展读取 ----
     mov si, dap
     mov ah, 0x42
     mov dl, [boot_drive]
@@ -47,20 +44,17 @@ print:
     popa
     ret
 
-; ---- 数据区 ----
 boot_drive db 0
-msg_stage1 db "Stage1: Loading Stage2...", 0x0d, 0x0a, 0
 msg_err    db "Stage1: disk read error!", 0x0d, 0x0a, 0
 
-; 磁盘地址包 (Disk Address Packet)
 align 4
 dap:
-    db 0x10                 ; 结构体大小
-    db 0x00                 ; 保留
-    dw STAGE2_SECTORS       ; 要读取的扇区数 (16)
-    dw STAGE2_ADDR          ; 目标偏移 (0x7e00)
-    dw 0x0000               ; 目标段基址 (0)
-    dq 1                    ; 起始 LBA 地址 (第 2 个扇区, LBA 从 0 开始算)
+    db 0x10
+    db 0x00
+    dw STAGE2_SECTORS
+    dw STAGE2_ADDR
+    dw 0x0000
+    dq 1
 
 times 510-($-$$) db 0
 dw 0xaa55
