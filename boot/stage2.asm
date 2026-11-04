@@ -5,7 +5,7 @@ CODE_SEG        equ gdt_code - gdt_start
 DATA_SEG        equ gdt_data - gdt_start
 CODE64_SEG      equ gdt_code64 - gdt64_start
 DATA64_SEG      equ gdt_data64 - gdt64_start
-KERNEL_SECTORS  equ 8
+KERNEL_SECTORS  equ 32
 KERNEL_LBA      equ 17
 KERNEL_ADDR     equ 0x10000      ; <- 改成 64KB 低地址
 KERNEL_DRIVE    equ 0x0500
@@ -87,8 +87,8 @@ dap_kernel:
     db 0x10
     db 0x00
     dw KERNEL_SECTORS
-    dw 0x0000                ; 偏移 0x0000
-    dw 0x1000                ; 段 0x1000 -> 0x1000*16 + 0x0 = 0x10000
+    dw 0x0000
+    dw 0x1000
     dq KERNEL_LBA
 
 [bits 32]
