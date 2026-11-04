@@ -1,5 +1,6 @@
 // kernel/kernel.c
 #include <stdarg.h>
+#include "idt.h"
 
 /* ===== 端口 I/O ===== */
 
@@ -154,48 +155,17 @@ void printk(const char *fmt, ...) {
 
 void kernel_main(void) {
     serial_init();
+    printk("\nKernel Loaded!\n");
 
-    printk("\n");
-    printk("Kernel Loaded!\n");
-    printk("-----------------\n");
+    idt_init();
+    printk("IDT initialized.\n");
 
-    /* 十进制有符号 */
-    printk("[d] 42          = %d\n", 42);
-    printk("[d] -123        = %d\n", -123);
-    printk("[d] INT_MIN     = %d\n", -2147483647 - 1);
-    printk("[d] two args    = %d and %d\n", 100, 200);
+    /* 故意触发异常: 除零 */
+    printk("Triggering divide by zero...\n");
+    volatile int a = 1, b = 0;
+    volatile int c = a / b;
+    (void)c;
 
-    /* 十进制无符号 */
-    printk("[u] 0           = %u\n", 0u);
-    printk("[u] 4294967295  = %u\n", 4294967295u);
-
-    /* 十六进制 */
-    printk("[x] 0xdeadbeef  = %x\n", 0xdeadbeefu);
-    printk("[x] 0xCAFE      = %x\n", 0xCAFEu);
-    printk("[X] 0xCAFE      = %X\n", 0xCAFEu);
-
-    /* 字符串 */
-    printk("[s] hello       = %s\n", "hello");
-    printk("[s] null        = %s\n", (const char *)0);
-
-    /* 字符 */
-    printk("[c] 'A'         = %c\n", 'A');
-
-    /* 指针 */
-    int x = 0;
-    printk("[p] &x          = %p\n", (void *)&x);
-    printk("[p] null        = %p\n", (void *)0);
-
-    /* 百分号 */
-    printk("[%%] literal     = 100%%\n");
-
-    /* 混合 */
-    printk("[mix] %s=%d (%x) at %p\n", "val", 255, 255, (void *)&x);
-
-    printk("-----------------\n");
-    printk("- All format tests done.\n");
-
-    for (;;) {
-        __asm__ volatile ("hlt");
-    }
+    printk("Should not reach here.\n");
+    for (;;) __asm__ volatile ("hlt");
 }
