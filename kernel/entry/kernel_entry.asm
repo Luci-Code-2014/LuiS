@@ -11,8 +11,8 @@ _start:
     mov rsp, 0x90000
     xor rbp, rbp
 
-    mov rdi, __bss_start
-    mov rcx, __bss_end
+    lea rdi, [__bss_start]
+    lea rcx, [__bss_end]
     sub rcx, rdi
     xor al, al
     cld
