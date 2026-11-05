@@ -1,6 +1,8 @@
 // kernel/kernel.c
 #include <stdarg.h>
 #include "idt.h"
+#include "pic.h"
+#include "pit.h"
 
 /* ===== 端口 I/O ===== */
 
@@ -29,6 +31,14 @@ static void serial_putc(char c) {
         if (inb(0x3FD) & 0x20) break;
     }
     outb(0x3F8, (unsigned char)c);
+}
+
+/* 非阻塞读一个字符, 没有数据返回 0 */
+static char serial_getc_nonblock(void) {
+    if (inb(0x3FD) & 0x01) {      /* LSR bit0: Data Ready */
+        return (char)inb(0x3F8);
+    }
+    return 0;
 }
 
 /* ===== printk 内部 ===== */
@@ -155,17 +165,44 @@ void printk(const char *fmt, ...) {
 
 void kernel_main(void) {
     serial_init();
-    printk("\nKernel Loaded!\n");
+    printk("\n\nKernel Loaded!\n");
+
+    pic_remap();
+    printk("PIC remapped.\n");
 
     idt_init();
     printk("IDT initialized.\n");
 
-    /* 故意触发异常: 除零 */
-    printk("Triggering divide by zero...\n");
-    volatile int a = 1, b = 0;
-    volatile int c = a / b;
-    (void)c;
+    pit_init(100);      /* 100 Hz, 每 10ms 一次 */
+    printk("PIT initialized at 100 Hz.\n");
 
-    printk("Should not reach here.\n");
-    for (;;) __asm__ volatile ("hlt");
+    printk("Serial input ready. Type something:\n> ");
+
+    char line[128];
+    int len = 0;
+
+    __asm__ volatile ("sti");   /* 开中断, PIT 开始 tick */
+
+    for (;;) {
+        /* 醒来后先把串口里所有待处理的字符读干净 */
+        char c;
+        while ((c = serial_getc_nonblock()) != 0) {
+            if (c == '\r' || c == '\n') {
+                line[len] = '\0';
+                printk("\nYou typed: [%s]\n> ", line);
+                len = 0;
+            } else if (c == 0x7F || c == '\b') {
+                if (len > 0) {
+                    len--;
+                    printk("\b \b");
+                }
+            } else if (c >= 0x20 && c < 0x7F) {
+                if (len < (int)sizeof(line) - 1) {
+                    line[len++] = c;
+                    printk("%c", c);
+                }
+            }
+        }
+        __asm__ volatile ("hlt");   /* 睡到下一个 PIT 中断 */
+    }
 }
