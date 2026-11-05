@@ -2,7 +2,8 @@
 
 | 介绍 | 版本 | 当前 |
 | --- | --- | --- |
-| kernel(idt): 添加了 IDT | 1.1.0 | * |
+| kernel(keyboard): 添加了 PS/2 键盘和 IRQ1 处理和扫描码映射 | 1.2.0 | * |
+| kernel(idt): 添加了 IDT | 1.1.0 |   |
 | kernel: 为 printk 函数添加了一堆格式化标识符 | 1.0.2 |   |
 | kernel: 为 printk 函数添加 %d | 1.0.1 |   |
 | feat: 内核加载成功! | 1.0.0 |   |
