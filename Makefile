@@ -28,16 +28,32 @@ kernel/entry/kernel_entry.o: kernel/entry/kernel_entry.asm
 kernel/isr.o: kernel/isr.asm
 	$(NASM) -f elf64 $< -o $@
 
-kernel/idt.o: kernel/idt.c
+kernel/idt.o: kernel/idt.c kernel/idt.h kernel/isr.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-kernel/kernel.o: kernel/kernel.c
+kernel/pic.o: kernel/pic.c kernel/pic.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/keyboard.o: kernel/keyboard.c kernel/keyboard.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/kernel.o: kernel/kernel.c kernel/idt.h kernel/pic.h kernel/keyboard.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/pit.o: kernel/pit.c kernel/pit.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ===== 链接 =====
-kernel/kernel.elf: kernel/entry/kernel_entry.o kernel/isr.o kernel/idt.o kernel/kernel.o kernel/kernel.ld
-	$(LD) -T kernel/kernel.ld -o $@ \
-		kernel/entry/kernel_entry.o kernel/isr.o kernel/idt.o kernel/kernel.o
+KERNEL_OBJS := kernel/entry/kernel_entry.o \
+    kernel/isr.o \
+    kernel/idt.o \
+    kernel/pic.o \
+    kernel/pit.o \
+    kernel/keyboard.o \
+    kernel/kernel.o
+
+kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
+	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
 
 kernel/kernel.bin: kernel/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -50,7 +66,7 @@ $(IMG): boot/stage1.bin boot/stage2.bin kernel/kernel.bin
 
 # ===== 运行 =====
 run: $(IMG)
-	$(QEMU) -drive format=raw,file=$(IMG) -nographic -no-reboot
+	$(QEMU) -drive format=raw,file=$(IMG) -nographic
 
 debug: $(IMG)
 	$(QEMU) -drive format=raw,file=$(IMG) -s -S -nographic -no-reboot
