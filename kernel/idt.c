@@ -1,8 +1,11 @@
 // kernel/idt.c
 #include "idt.h"
+#include "isr.h"
+#include "pic.h"
+#include "keyboard.h"
+#include "pit.h"
 
 extern void *isr_stub_table[256];
-extern void isr_handler_c(struct interrupt_frame *frame);
 
 static struct idt_entry idt[256];
 static struct idt_ptr   idtp;
@@ -10,9 +13,9 @@ static struct idt_ptr   idtp;
 static void idt_set(int vec, void *handler) {
     uint64_t addr = (uint64_t)handler;
     idt[vec].offset_low  = addr & 0xFFFF;
-    idt[vec].selector    = 0x08;          // 内核代码段
+    idt[vec].selector    = 0x08;
     idt[vec].ist         = 0;
-    idt[vec].type_attr   = 0x8E;          // present, DPL=0, 64-bit interrupt gate
+    idt[vec].type_attr   = 0x8E;
     idt[vec].offset_mid  = (addr >> 16) & 0xFFFF;
     idt[vec].offset_high = (addr >> 32) & 0xFFFFFFFF;
     idt[vec].zero        = 0;
@@ -29,7 +32,7 @@ void idt_init(void) {
     __asm__ volatile ("lidt %0" : : "m"(idtp));
 }
 
-/* C 层统一处理 */
+/* 异常名称表 */
 static const char *exc_name[32] = {
     "Divide Error", "Debug", "NMI", "Breakpoint",
     "Overflow", "Bound Range", "Invalid Opcode", "Device Not Available",
@@ -45,18 +48,31 @@ void isr_handler_c(struct interrupt_frame *f) {
     extern void printk(const char *, ...);
 
     if (f->int_no < 32) {
+        /* 异常处理 */
         printk("\n*** EXCEPTION %d: %s ***\n",
             (int)f->int_no, exc_name[f->int_no]);
         printk("  err_code = %p\n", (void *)f->err_code);
         printk("  RIP = %p  CS = %p  RFLAGS = %p\n",
-               (void *)f->rip, (void *)f->cs, (void *)f->rflags);
+            (void *)f->rip, (void *)f->cs, (void *)f->rflags);
         printk("  RSP = %p  SS = %p\n", (void *)f->rsp, (void *)f->ss);
         printk("  RAX=%p RBX=%p RCX=%p RDX=%p\n",
-               (void *)f->rax, (void *)f->rbx, (void *)f->rcx, (void *)f->rdx);
+            (void *)f->rax, (void *)f->rbx, (void *)f->rcx, (void *)f->rdx);
         printk("  RSI=%p RDI=%p RBP=%p\n",
-               (void *)f->rsi, (void *)f->rdi, (void *)f->rbp);
+            (void *)f->rsi, (void *)f->rdi, (void *)f->rbp);
         printk("*** HALT ***\n");
         for (;;) __asm__ volatile ("cli; hlt");
     }
-    /* IRQ 处理以后再加 */
+
+    /* IRQ 32~47 */
+    if (f->int_no >= 32 && f->int_no < 48) {
+        unsigned char irq = f->int_no - 32;
+
+        if (irq == 0) {
+            pit_ticks++;
+        } else if (irq == 1) {
+            keyboard_handle_irq();
+        }
+
+        pic_send_eoi(irq);
+    }
 }
