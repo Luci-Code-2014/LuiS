@@ -52,8 +52,9 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/keyboard.o \
     kernel/kernel.o
 
-kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
-	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
+kernel/kernel.elf: kernel/entry/kernel_entry.o kernel/isr.o kernel/idt.o kernel/pic.o kernel/pit.o kernel/gfx.o kernel/keyboard.o kernel/kernel.o kernel/kernel.ld
+	$(LD) -T kernel/kernel.ld -o $@ \
+	kernel/entry/kernel_entry.o kernel/isr.o kernel/idt.o kernel/pic.o kernel/pit.o kernel/gfx.o kernel/keyboard.o kernel/kernel.o
 
 kernel/kernel.bin: kernel/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -66,7 +67,7 @@ $(IMG): boot/stage1.bin boot/stage2.bin kernel/kernel.bin
 
 # ===== 运行 =====
 run: $(IMG)
-	$(QEMU) -drive format=raw,file=$(IMG) -nographic
+	$(QEMU) -drive format=raw,file=$(IMG) -serial stdio -display sdl -no-reboot -vga std
 
 debug: $(IMG)
 	$(QEMU) -drive format=raw,file=$(IMG) -s -S -nographic -no-reboot
