@@ -7,18 +7,60 @@ CODE64_SEG      equ gdt_code64 - gdt64_start
 DATA64_SEG      equ gdt_data64 - gdt64_start
 KERNEL_SECTORS  equ 32
 KERNEL_LBA      equ 17
-KERNEL_ADDR     equ 0x10000      ; <- 改成 64KB 低地址
+KERNEL_ADDR     equ 0x10000
 KERNEL_DRIVE    equ 0x0500
 
 start:
+    ; ===== 1. 开启 A20 =====
     in al, 0x92
     test al, 2
-    jnz .a20_on
+    jnz .a20_done
     or al, 2
     and al, 0x0FE
     out 0x92, al
+.a20_done:
 
-.a20_on:
+    ; ===== 2. 设置 VBE 模式 1024x768x32 =====
+    mov ax, 0x4F02
+    mov bx, 0x4118          ; 0x4000 (linear) | 0x118 (1024x768x32)
+    int 0x10
+    cmp ax, 0x004F
+    jne .vbe_error
+
+    ; ===== 3. 获取 VBE 模式信息 =====
+    mov ax, 0x4F01
+    mov cx, 0x118
+    mov di, vbe_mode_info
+    int 0x10
+    cmp ax, 0x004F
+    jne .vbe_error
+
+    ; 存 framebuffer 地址到 0x5000
+    mov eax, [vbe_mode_info + 0x28]
+    mov [0x5000], eax
+
+    ; 存 Pitch (每行字节数) 到 0x5004 (VBE info 偏移 0x10)
+    mov ax, [vbe_mode_info + 0x10]
+    movzx eax, ax
+    mov [0x5004], eax
+
+    ; 存 BPP (每像素位数) 到 0x5008 (VBE info 偏移 0x19)
+    mov al, [vbe_mode_info + 0x19]
+    movzx eax, al
+    mov [0x5008], eax
+
+    jmp .vbe_ok
+
+.vbe_error:
+    mov si, msg_vbe_err
+    call print
+    cli
+    hlt
+    jmp $
+
+.vbe_ok:
+
+    ; ===== 4. 读内核 =====
     cli
     xor ax, ax
     mov ds, ax
@@ -30,6 +72,7 @@ start:
     int 0x13
     jc .kernel_error
 
+    ; ===== 5. 进保护模式 =====
     lgdt [gdt32_descriptor]
 
     mov eax, cr0
@@ -58,6 +101,7 @@ print:
     popa
     ret
 
+; ===== 数据 =====
 gdt_start:
     dq 0x0000000000000000
 gdt_code:
@@ -81,6 +125,11 @@ gdt32_descriptor:
     dd gdt_start
 
 msg_kernel_err db "Stage2: kernel disk read error!", 0x0d, 0x0a, 0
+msg_vbe_err    db "Stage2: VBE mode set failed!", 0x0d, 0x0a, 0
+
+align 4
+vbe_mode_info:
+    times 256 db 0
 
 align 4
 dap_kernel:
@@ -111,35 +160,59 @@ init_32bit:
     test edx, 1 << 29
     jz .no_long_mode
 
+    ; ===== 建页表 =====
+    ; PML4 在 0x1000, PDPT 在 0x2000, PD0 在 0x3000, PD3 在 0x4000
     mov edi, 0x1000
     mov cr3, edi
     xor eax, eax
-    mov ecx, 3072
+    mov ecx, 4096       ; 清空 4KB * 4 = 16KB (0x1000 ~ 0x5000)
     cld
     rep stosd
 
+    ; PML4[0] -> PDPT (0x2000)
     mov edi, 0x1000
     mov eax, 0x2000
     or eax, 0x03
     mov dword [edi], eax
     mov dword [edi+4], 0
 
+    ; PDPT[0] -> PD0 (0x3000) [映射 0 - 1GB]
     mov edi, 0x2000
     mov eax, 0x3000
     or eax, 0x03
     mov dword [edi], eax
     mov dword [edi+4], 0
 
+    ; PDPT[3] -> PD3 (0x4000) [映射 3GB - 4GB]
+    mov edi, 0x2000 + (3 * 8)
+    mov eax, 0x4000
+    or eax, 0x03
+    mov dword [edi], eax
+    mov dword [edi+4], 0
+
+    ; 填充 PD0: 映射 0 - 1GB
     mov edi, 0x3000
-    mov eax, 0x83
+    mov eax, 0x83       ; Present, RW, PS (2MB)
     mov ecx, 512
-.loop_pd:
+.loop_pd0:
     mov dword [edi], eax
     mov dword [edi+4], 0
     add eax, 0x200000
     add edi, 8
-    loop .loop_pd
+    loop .loop_pd0
 
+    ; 填充 PD3: 映射 3GB - 4GB
+    mov edi, 0x4000
+    mov eax, 0xC0000083 ; 物理地址 3GB, 属性 0x83
+    mov ecx, 512
+.loop_pd3:
+    mov dword [edi], eax
+    mov dword [edi+4], 0
+    add eax, 0x200000
+    add edi, 8
+    loop .loop_pd3
+
+    ; ===== 开启 PAE, 长模式 =====
     mov eax, cr4
     or eax, 1 << 5
     mov cr4, eax
@@ -195,7 +268,6 @@ init_64bit:
 
     cld
 
-    ; ---- 跳转 Kernel ----
     mov rax, KERNEL_ADDR
     jmp rax
 
