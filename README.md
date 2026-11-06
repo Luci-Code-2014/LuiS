@@ -16,12 +16,10 @@
 
 包: qemu, nasm, gdb
 
-> 开发者: Luci
-
-> 当前版本: 1.0.0
+> 开发者: LuiS
 
 ## 介绍
 
 **LuiS** 是一个由 Luci 开发的操作系统, 目前团队里只有 1 人
 
-输入 `make run` 运行 luis.img (由 make 生成)
+输入 `make run` 运行
