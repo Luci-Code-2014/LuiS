@@ -3,6 +3,7 @@
 #include "idt.h"
 #include "pic.h"
 #include "pit.h"
+#include "gfx.h"
 
 /* ===== 端口 I/O ===== */
 
@@ -165,28 +166,21 @@ void printk(const char *fmt, ...) {
 
 void kernel_main(void) {
     serial_init();
-    printk("\n\nKernel Loaded!\n");
+    printk("\nKernel Loaded!\n");
 
-    pic_remap();
-    printk("PIC remapped.\n");
-
-    idt_init();
-    printk("IDT initialized.\n");
-
-    pit_init(100);      /* 100 Hz, 每 10ms 一次 */
-    printk("PIT initialized at 100 Hz.\n");
-
-    printk("Serial input ready. Type something:\n> ");
-
+    gfx_init();
+    
+    clear_screen(0x00102030);
+    fill_rect(100, 100, 200, 200, 0x00FF0000);
+    fill_rect(400, 300, 150, 150, 0x0000FF00);
+    
+    printk("Done. Entering loop.\n");
     char line[128];
     int len = 0;
-
-    __asm__ volatile ("sti");   /* 开中断, PIT 开始 tick */
-
+    
     for (;;) {
-        /* 醒来后先把串口里所有待处理的字符读干净 */
-        char c;
-        while ((c = serial_getc_nonblock()) != 0) {
+        char c = serial_getc_nonblock();
+        if (c != 0) {
             if (c == '\r' || c == '\n') {
                 line[len] = '\0';
                 printk("\nYou typed: [%s]\n> ", line);
@@ -203,6 +197,6 @@ void kernel_main(void) {
                 }
             }
         }
-        __asm__ volatile ("hlt");   /* 睡到下一个 PIT 中断 */
+        __asm__ volatile ("hlt");
     }
 }
