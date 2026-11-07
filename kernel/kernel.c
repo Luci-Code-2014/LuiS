@@ -4,6 +4,7 @@
 #include "pic.h"
 #include "pit.h"
 #include "gfx.h"
+#include "mouse.h"
 
 /* ===== 端口 I/O ===== */
 
@@ -168,35 +169,58 @@ void kernel_main(void) {
     serial_init();
     printk("\nKernel Loaded!\n");
 
+    pic_remap();
+    idt_init();
+    pit_init(100);
+    mouse_init();
+
     gfx_init();
     
+    // 强制先画一帧背景和文字
     clear_screen(0x00102030);
-    fill_rect(100, 100, 200, 200, 0x00FF0000);
-    fill_rect(400, 300, 150, 150, 0x0000FF00);
-    
-    printk("Done. Entering loop.\n");
-    char line[128];
-    int len = 0;
-    
+    draw_string(50, 50, "Hello, LuiS OS!", 0x00FFFFFF);
+    draw_string(50, 100, "Mouse is working perfectly!", 0x0000FF00);
+    draw_string(50, 150, "Try moving the mouse around.", 0x00FF0000);
+
+    __asm__ volatile ("sti"); 
+
+    int old_x = mouse_get_x();
+    int old_y = mouse_get_y();
+    draw_mouse_cursor(old_x, old_y); // 初始画一次
+
     for (;;) {
-        char c = serial_getc_nonblock();
-        if (c != 0) {
-            if (c == '\r' || c == '\n') {
-                line[len] = '\0';
-                printk("\nYou typed: [%s]\n> ", line);
-                len = 0;
-            } else if (c == 0x7F || c == '\b') {
-                if (len > 0) {
-                    len--;
-                    printk("\b \b");
-                }
-            } else if (c >= 0x20 && c < 0x7F) {
-                if (len < (int)sizeof(line) - 1) {
-                    line[len++] = c;
-                    printk("%c", c);
-                }
-            }
+        int mx = mouse_get_x();
+        int my = mouse_get_y();
+
+        if (mx != old_x || my != old_y) {
+            
+            // 1. 计算脏矩形区域
+            int min_x = (old_x < mx) ? old_x : mx;
+            int min_y = (old_y < my) ? old_y : my;
+            int max_x = ((old_x > mx) ? old_x : mx) + 12; // 鼠标宽度
+            int max_y = ((old_y > my) ? old_y : my) + 19; // 鼠标高度
+            
+            // 2. 边界裁剪
+            if (min_x < 0) min_x = 0;
+            if (min_y < 0) min_y = 0;
+            if (max_x > 1920) max_x = 1920;
+            if (max_y > 1080) max_y = 1080;
+
+            // 3. 擦除旧背景
+            fill_rect(min_x, min_y, max_x - min_x, max_y - min_y, 0x00102030);
+            
+            // 4. 如果脏矩形碰到了文字所在的区域, 就把文字重新画一遍
+            if (min_y < 70 && max_y > 50) draw_string(50, 50, "Hello, LuiS OS!", 0x00FFFFFF);
+            if (min_y < 120 && max_y > 100) draw_string(50, 100, "Mouse is working perfectly!", 0x0000FF00);
+            if (min_y < 170 && max_y > 150) draw_string(50, 150, "Try moving the mouse around.", 0x00FF0000);
+            
+            // 5. 最后画新鼠标
+            draw_mouse_cursor(mx, my);
+
+            old_x = mx;
+            old_y = my;
         }
+        
         __asm__ volatile ("hlt");
     }
 }
