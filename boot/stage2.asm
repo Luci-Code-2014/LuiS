@@ -22,7 +22,7 @@ start:
 
     ; ===== 2. 设置 VBE 模式 1024x768x32 =====
     mov ax, 0x4F02
-    mov bx, 0x4118          ; 0x4000 (linear) | 0x118 (1024x768x32)
+    mov bx, 0x4118
     int 0x10
     cmp ax, 0x004F
     jne .vbe_error
