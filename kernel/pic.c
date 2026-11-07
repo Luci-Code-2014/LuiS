@@ -31,9 +31,10 @@ void pic_remap(void) {
     outb(PIC1_DATA, ICW4_8086);
     outb(PIC2_DATA, ICW4_8086);
 
-    // 屏蔽所有 IRQ, 只开 IRQ1 (键盘)和 IRQ2 (级联)
-    outb(PIC1_DATA, 0xFC);   // 1111 1100 -> 只开 IRQ0, IRQ1？不, 0xFC = 1111 1100, bit0=0 (开IRQ0) bit1=0 开IRQ1)
-    outb(PIC2_DATA, 0xFF);   // 从 PIC 全屏蔽
+    // 主 PIC: 打开 IRQ0, IRQ1, IRQ2 (级联)
+    outb(PIC1_DATA, 0xF8);   // 1111 1000
+    // 从 PIC: 只打开 IRQ12 (bit 4 = 0)
+    outb(PIC2_DATA, 0xEF);   // 1110 1111
 }
 
 void pic_send_eoi(unsigned char irq) {

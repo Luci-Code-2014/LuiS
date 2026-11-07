@@ -4,6 +4,7 @@
 #include "pic.h"
 #include "keyboard.h"
 #include "pit.h"
+#include "mouse.h"
 
 extern void *isr_stub_table[256];
 
@@ -67,10 +68,10 @@ void isr_handler_c(struct interrupt_frame *f) {
     if (f->int_no >= 32 && f->int_no < 48) {
         unsigned char irq = f->int_no - 32;
 
-        if (irq == 0) {
-            pit_ticks++;
-        } else if (irq == 1) {
+        if (irq == 1) {
             keyboard_handle_irq();
+        } else if (irq == 12) {
+            mouse_handle_irq();
         }
 
         pic_send_eoi(irq);
