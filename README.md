@@ -8,13 +8,15 @@
 
 目前仅支持 **Legacy BIOS**
 
-## 测试
+支持图形化
+
+## 运行
 
 使用 `make run` 运行测试
 
-系统要求: Arch Linux
+系统要求: Linux
 
-包: qemu, nasm, gdb
+要求的包: qemu-system-x86_64, nasm, gdb, gcc
 
 > 开发者: LuiS
 
