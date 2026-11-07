@@ -34,13 +34,19 @@ kernel/idt.o: kernel/idt.c kernel/idt.h kernel/isr.h
 kernel/pic.o: kernel/pic.c kernel/pic.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
+kernel/pit.o: kernel/pit.c kernel/pit.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/gfx.o: kernel/gfx.c kernel/gfx.h kernel/font8x16.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
 kernel/keyboard.o: kernel/keyboard.c kernel/keyboard.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-kernel/kernel.o: kernel/kernel.c kernel/idt.h kernel/pic.h kernel/keyboard.h
+kernel/mouse.o: kernel/mouse.c kernel/mouse.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-kernel/pit.o: kernel/pit.c kernel/pit.h
+kernel/kernel.o: kernel/kernel.c kernel/idt.h kernel/pic.h kernel/pit.h kernel/keyboard.h kernel/gfx.h kernel/mouse.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ===== 链接 =====
@@ -49,12 +55,13 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/idt.o \
     kernel/pic.o \
     kernel/pit.o \
+    kernel/gfx.o \
     kernel/keyboard.o \
+    kernel/mouse.o \
     kernel/kernel.o
 
-kernel/kernel.elf: kernel/entry/kernel_entry.o kernel/isr.o kernel/idt.o kernel/pic.o kernel/pit.o kernel/gfx.o kernel/keyboard.o kernel/kernel.o kernel/kernel.ld
-	$(LD) -T kernel/kernel.ld -o $@ \
-	kernel/entry/kernel_entry.o kernel/isr.o kernel/idt.o kernel/pic.o kernel/pit.o kernel/gfx.o kernel/keyboard.o kernel/kernel.o
+kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
+	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
 
 kernel/kernel.bin: kernel/kernel.elf
 	$(OBJCOPY) -O binary $< $@
