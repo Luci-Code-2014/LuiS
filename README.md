@@ -16,7 +16,7 @@
 
 系统要求: Linux
 
-要求的包: qemu-system-x86_64, nasm, gdb, gcc
+编译要求: qemu-system-x86_64, nasm, gdb, gcc, ld 等基础包
 
 > 开发者: LuiS
 
