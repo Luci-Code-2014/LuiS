@@ -3,7 +3,7 @@ NASM  := nasm
 CC    := gcc
 LD    := ld
 OBJCOPY := objcopy
-QEMU  := qemu-system-x86_64
+QEMU := qemu-system-x86_64 -m 128
 IMG   := luis.img
 
 all: $(IMG)
@@ -52,6 +52,12 @@ kernel/kernel.o: kernel/kernel.c kernel/idt.h kernel/pic.h kernel/pit.h kernel/k
 kernel/panic.o: kernel/panic.c kernel/panic.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
+kernel/pmm.o: kernel/pmm.c kernel/pmm.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/kheap.o: kernel/kheap.c kernel/kheap.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # ===== 链接 =====
 KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/isr.o \
@@ -62,7 +68,9 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/keyboard.o \
     kernel/mouse.o \
     kernel/kernel.o\
-	kernel/panic.o
+	kernel/panic.o\
+	kernel/pmm.o\
+	kernel/kheap.o
 
 kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
 	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
