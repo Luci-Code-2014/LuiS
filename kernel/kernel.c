@@ -36,7 +36,7 @@ static void serial_putc(char c) {
 }
 
 /* 非阻塞读一个字符, 没有数据返回 0 */
-static char serial_getc_nonblock(void) {
+__attribute__((unused)) static char serial_getc_nonblock(void) {
     if (inb(0x3FD) & 0x01) {      /* LSR bit0: Data Ready */
         return (char)inb(0x3F8);
     }
@@ -173,50 +173,43 @@ void kernel_main(void) {
     idt_init();
     pit_init(100);
     mouse_init();
-
     gfx_init();
     
-    // 强制先画一帧背景和文字
+    // 画基础背景和文字
     clear_screen(0x00102030);
     draw_string(50, 50, "Hello, LuiS OS!", 0x00FFFFFF);
     draw_string(50, 100, "Mouse is working perfectly!", 0x0000FF00);
     draw_string(50, 150, "Try moving the mouse around.", 0x00FF0000);
 
+    // 如果没触发 panic 才会走到下面
     __asm__ volatile ("sti"); 
 
     int old_x = mouse_get_x();
     int old_y = mouse_get_y();
-    draw_mouse_cursor(old_x, old_y); // 初始画一次
+    draw_mouse_cursor(old_x, old_y);
 
     for (;;) {
         int mx = mouse_get_x();
         int my = mouse_get_y();
 
         if (mx != old_x || my != old_y) {
-            
-            // 1. 计算脏矩形区域
             int min_x = (old_x < mx) ? old_x : mx;
             int min_y = (old_y < my) ? old_y : my;
-            int max_x = ((old_x > mx) ? old_x : mx) + 12; // 鼠标宽度
-            int max_y = ((old_y > my) ? old_y : my) + 19; // 鼠标高度
+            int max_x = ((old_x > mx) ? old_x : mx) + 12;
+            int max_y = ((old_y > my) ? old_y : my) + 19;
             
-            // 2. 边界裁剪
             if (min_x < 0) min_x = 0;
             if (min_y < 0) min_y = 0;
             if (max_x > 1920) max_x = 1920;
             if (max_y > 1080) max_y = 1080;
 
-            // 3. 擦除旧背景
             fill_rect(min_x, min_y, max_x - min_x, max_y - min_y, 0x00102030);
             
-            // 4. 如果脏矩形碰到了文字所在的区域, 就把文字重新画一遍
             if (min_y < 70 && max_y > 50) draw_string(50, 50, "Hello, LuiS OS!", 0x00FFFFFF);
             if (min_y < 120 && max_y > 100) draw_string(50, 100, "Mouse is working perfectly!", 0x0000FF00);
             if (min_y < 170 && max_y > 150) draw_string(50, 150, "Try moving the mouse around.", 0x00FF0000);
             
-            // 5. 最后画新鼠标
             draw_mouse_cursor(mx, my);
-
             old_x = mx;
             old_y = my;
         }
