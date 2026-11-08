@@ -2,17 +2,14 @@
 #include "gfx.h"
 #include "font8x16.h"
 
-static uint8_t *vram = 0;
-static uint32_t fb_width = 1024;   // 下面会从 VBE 动态获取
+static uint32_t fb_width = 1024;
 static uint32_t fb_height = 768;
 static uint32_t fb_pitch = 3072; 
-static uint32_t fb_bpp = 24;       // 24 或 32
+static uint32_t fb_bpp = 24;
 
 void gfx_init(void) {
-    uint32_t fb_addr = *(volatile uint32_t *)0x5000;
-    uint32_t pitch   = *(volatile uint32_t *)0x5004;
-    uint32_t bpp     = *(volatile uint32_t *)0x5008;
-    vram = (uint8_t *)(unsigned long)fb_addr;
+    uint32_t pitch = *(volatile uint32_t *)0x5004;
+    uint32_t bpp   = *(volatile uint32_t *)0x5008;
     fb_pitch = pitch;
     fb_bpp = bpp;
 
@@ -26,8 +23,11 @@ void gfx_init(void) {
 }
 
 void putpixel(uint32_t x, uint32_t y, uint32_t color) {
-    if (!vram || x >= fb_width || y >= fb_height) return;
+    if (x >= fb_width || y >= fb_height) return;
 
+    // 直接取显存的物理地址
+    uint8_t *vram = (uint8_t *)(unsigned long)(*(volatile uint32_t *)0x5000);
+    
     uint32_t offset = y * fb_pitch + x * (fb_bpp / 8);
     
     uint8_t r = (color >> 16) & 0xFF;
@@ -40,6 +40,14 @@ void putpixel(uint32_t x, uint32_t y, uint32_t color) {
     if (fb_bpp == 32) vram[offset + 3] = 0;
 }
 
+void clear_screen(uint32_t color) {
+    for (uint32_t y = 0; y < fb_height; y++) {
+        for (uint32_t x = 0; x < fb_width; x++) {
+            putpixel(x, y, color);
+        }
+    }
+}
+
 void fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     for (uint32_t j = 0; j < h; j++) {
         for (uint32_t i = 0; i < w; i++) {
@@ -48,13 +56,10 @@ void fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     }
 }
 
-void clear_screen(uint32_t color) {
-    fill_rect(0, 0, fb_width, fb_height, color);
-}
-
 void draw_char(uint32_t x, uint32_t y, char ch, uint32_t color) {
     unsigned char c = (unsigned char)ch;
     if (c < 32 || c > 126) return;
+
     uint8_t *glyph = (uint8_t *)font8x16[c - 32];
     for (int row = 0; row < 16; row++) {
         uint8_t bits = glyph[row];
@@ -67,17 +72,20 @@ void draw_char(uint32_t x, uint32_t y, char ch, uint32_t color) {
 }
 
 uint32_t draw_string(uint32_t x, uint32_t y, const char *str, uint32_t color) {
-    uint32_t cur_x = x, cur_y = y;
+    uint32_t start_x = x;
+    uint32_t cur_x = x;
+    uint32_t cur_y = y;
+
     while (*str) {
         char c = *str;
         if (c == '\n') {
-            cur_x = x;
+            cur_x = start_x;
             cur_y += 16;
         } else {
             draw_char(cur_x, cur_y, c, color);
             cur_x += 8;
             if (cur_x + 8 > fb_width) {
-                cur_x = x;
+                cur_x = start_x;
                 cur_y += 16;
             }
         }
@@ -87,7 +95,7 @@ uint32_t draw_string(uint32_t x, uint32_t y, const char *str, uint32_t color) {
 }
 
 void draw_mouse_cursor(int x, int y) {
-    // 经典 12x19 Windows 鼠标指针 (0 = 透明，1 = 白，2 = 黑)
+    // 经典 12x19 Windows 鼠标指针 (0=透明, 1=白, 2=黑)
     static const uint8_t cursor[19][12] = {
         {2,0,0,0,0,0,0,0,0,0,0,0},
         {2,2,0,0,0,0,0,0,0,0,0,0},
