@@ -49,6 +49,9 @@ kernel/mouse.o: kernel/mouse.c kernel/mouse.h
 kernel/kernel.o: kernel/kernel.c kernel/idt.h kernel/pic.h kernel/pit.h kernel/keyboard.h kernel/gfx.h kernel/mouse.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
+kernel/panic.o: kernel/panic.c kernel/panic.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
 # ===== 链接 =====
 KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/isr.o \
@@ -58,7 +61,8 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/gfx.o \
     kernel/keyboard.o \
     kernel/mouse.o \
-    kernel/kernel.o
+    kernel/kernel.o\
+	kernel/panic.o
 
 kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
 	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
