@@ -5,6 +5,7 @@
 #include "keyboard.h"
 #include "pit.h"
 #include "mouse.h"
+#include "panic.h"
 
 extern void *isr_stub_table[256];
 
@@ -46,25 +47,14 @@ static const char *exc_name[32] = {
 };
 
 void isr_handler_c(struct interrupt_frame *f) {
-    extern void printk(const char *, ...);
-
+    // 如果触发的是 CPU 异常 (0 ~ 31)
     if (f->int_no < 32) {
-        /* 异常处理 */
-        printk("\n*** EXCEPTION %d: %s ***\n",
-            (int)f->int_no, exc_name[f->int_no]);
-        printk("  err_code = %p\n", (void *)f->err_code);
-        printk("  RIP = %p  CS = %p  RFLAGS = %p\n",
-            (void *)f->rip, (void *)f->cs, (void *)f->rflags);
-        printk("  RSP = %p  SS = %p\n", (void *)f->rsp, (void *)f->ss);
-        printk("  RAX=%p RBX=%p RCX=%p RDX=%p\n",
-            (void *)f->rax, (void *)f->rbx, (void *)f->rcx, (void *)f->rdx);
-        printk("  RSI=%p RDI=%p RBP=%p\n",
-            (void *)f->rsi, (void *)f->rdi, (void *)f->rbp);
-        printk("*** HALT ***\n");
-        for (;;) __asm__ volatile ("cli; hlt");
+        // 根据异常号找异常名字 (你之前写的 exc_name 数组)
+        extern const char *exc_name[];
+        panic(exc_name[f->int_no], f->err_code, f->rip, f->rsp);
     }
 
-    /* IRQ 32~47 */
+    // IRQ 32 ~ 47 保持原样
     if (f->int_no >= 32 && f->int_no < 48) {
         unsigned char irq = f->int_no - 32;
 
