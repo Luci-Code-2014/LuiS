@@ -193,7 +193,7 @@ init_32bit:
     ; 填充 PD0: 映射 0 - 1GB
     mov edi, 0x3000
     mov eax, 0x83       ; Present, RW, PS (2MB)
-    mov ecx, 512
+    mov ecx, 64
 .loop_pd0:
     mov dword [edi], eax
     mov dword [edi+4], 0
