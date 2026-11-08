@@ -33,8 +33,6 @@ void panic(const char *msg, unsigned long err, unsigned long rip, unsigned long 
     draw_string(250, 250, "0x", 0x00FFFFFF);
     draw_string(270, 250, buf + 2, 0x00FFFFFF);
 
-    draw_string(100, 300, "The system has been halted. You can still move the mouse.", 0x00FFFFFF);
-
     // 3. 开启中断, 让鼠标 IRQ 还能进
     __asm__ volatile ("sti");
 
