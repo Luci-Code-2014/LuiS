@@ -2,7 +2,8 @@
 
 | 介绍 | 版本 | 当前 |
 | --- | --- | --- |
-| kernel(mouse): 支持鼠标. 经典 Windows 款式 | 2.2.0 | * |
+| kernel(panic): 新增 panic 函数, panic 时仍支持鼠标 | 2.3.0 | * |
+| kernel(mouse): 支持鼠标. 经典 Windows 款式 | 2.2.0 |   |
 | kernel(font): 可渲染文字, 使用 kernel/font8x16.h | 2.1.0 |   |
 | kernel(gfx): 添加了图形化 | 2.0.0 |   |
 | kernel(keyboard): 添加了 PS/2 键盘和 IRQ1 处理和扫描码映射 | 1.2.0 |   |
