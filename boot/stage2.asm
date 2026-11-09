@@ -5,7 +5,10 @@ CODE_SEG        equ gdt_code - gdt_start
 DATA_SEG        equ gdt_data - gdt_start
 CODE64_SEG      equ gdt_code64 - gdt64_start
 DATA64_SEG      equ gdt_data64 - gdt64_start
-KERNEL_SECTORS  equ 32
+
+; 每次读 16 扇区 (8KB), 循环 16 次, 总共 256 扇区 (128KB)
+KERNEL_SECTORS  equ 16
+KERNEL_LOOPS    equ 16
 KERNEL_LBA      equ 17
 KERNEL_ADDR     equ 0x10000
 KERNEL_DRIVE    equ 0x0500
@@ -38,13 +41,9 @@ start:
     ; 存 framebuffer 地址到 0x5000
     mov eax, [vbe_mode_info + 0x28]
     mov [0x5000], eax
-
-    ; 存 Pitch (每行字节数) 到 0x5004 (VBE info 偏移 0x10)
     mov ax, [vbe_mode_info + 0x10]
     movzx eax, ax
     mov [0x5004], eax
-
-    ; 存 BPP (每像素位数) 到 0x5008 (VBE info 偏移 0x19)
     mov al, [vbe_mode_info + 0x19]
     movzx eax, al
     mov [0x5008], eax
@@ -59,18 +58,30 @@ start:
     jmp $
 
 .vbe_ok:
-
-    ; ===== 4. 读内核 =====
+    ; ===== 4. 循环读内核 =====
     cli
     xor ax, ax
     mov ds, ax
     mov es, ax
 
+    mov cx, KERNEL_LOOPS
+    mov word [dap_kernel_seg], 0x1000
+    mov dword [dap_kernel_lba], KERNEL_LBA
+
+.read_kernel_loop:
+    push cx
     mov si, dap_kernel
     mov dl, [KERNEL_DRIVE]
     mov ah, 0x42
     int 0x13
     jc .kernel_error
+
+    ; 每次读完, 段地址前进 8KB (0x200), LBA 前进 16
+    add word [dap_kernel_seg], 0x200
+    add dword [dap_kernel_lba], 16
+
+    pop cx
+    loop .read_kernel_loop
 
     ; ===== 5. 进保护模式 =====
     lgdt [gdt32_descriptor]
@@ -136,8 +147,11 @@ dap_kernel:
     db 0x10
     db 0x00
     dw KERNEL_SECTORS
+dap_kernel_off:
     dw 0x0000
+dap_kernel_seg:
     dw 0x1000
+dap_kernel_lba:
     dq KERNEL_LBA
 
 [bits 32]
@@ -161,29 +175,25 @@ init_32bit:
     jz .no_long_mode
 
     ; ===== 建页表 =====
-    ; PML4 在 0x1000, PDPT 在 0x2000, PD0 在 0x3000, PD3 在 0x4000
     mov edi, 0x1000
     mov cr3, edi
     xor eax, eax
-    mov ecx, 4096       ; 清空 4KB * 4 = 16KB (0x1000 ~ 0x5000)
+    mov ecx, 4096
     cld
     rep stosd
 
-    ; PML4[0] -> PDPT (0x2000)
     mov edi, 0x1000
     mov eax, 0x2000
     or eax, 0x03
     mov dword [edi], eax
     mov dword [edi+4], 0
 
-    ; PDPT[0] -> PD0 (0x3000) [映射 0 - 1GB]
     mov edi, 0x2000
     mov eax, 0x3000
     or eax, 0x03
     mov dword [edi], eax
     mov dword [edi+4], 0
 
-    ; PDPT[3] -> PD3 (0x4000) [映射 3GB - 4GB]
     mov edi, 0x2000 + (3 * 8)
     mov eax, 0x4000
     or eax, 0x03
@@ -192,8 +202,8 @@ init_32bit:
 
     ; 填充 PD0: 映射 0 - 1GB
     mov edi, 0x3000
-    mov eax, 0x83       ; Present, RW, PS (2MB)
-    mov ecx, 64
+    mov eax, 0x83
+    mov ecx, 512
 .loop_pd0:
     mov dword [edi], eax
     mov dword [edi+4], 0
@@ -203,7 +213,7 @@ init_32bit:
 
     ; 填充 PD3: 映射 3GB - 4GB
     mov edi, 0x4000
-    mov eax, 0xC0000083 ; 物理地址 3GB, 属性 0x83
+    mov eax, 0xC0000083
     mov ecx, 512
 .loop_pd3:
     mov dword [edi], eax
@@ -267,7 +277,6 @@ init_64bit:
     mov gs, ax
 
     cld
-
     mov rax, KERNEL_ADDR
     jmp rax
 

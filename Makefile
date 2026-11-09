@@ -58,6 +58,9 @@ kernel/pmm.o: kernel/pmm.c kernel/pmm.h
 kernel/kheap.o: kernel/kheap.c kernel/kheap.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
+kernel/rootfs.o: /data/qemu/luis/rootfs.img
+	ld -r -b binary $< -o $@
+
 # ===== 链接 =====
 KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/isr.o \
@@ -67,10 +70,11 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/gfx.o \
     kernel/keyboard.o \
     kernel/mouse.o \
-    kernel/kernel.o\
-	kernel/panic.o\
-	kernel/pmm.o\
-	kernel/kheap.o
+    kernel/pmm.o \
+    kernel/kheap.o \
+    kernel/panic.o \
+    kernel/ext4.o \
+    kernel/kernel.o
 
 kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
 	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
@@ -82,11 +86,11 @@ kernel/kernel.bin: kernel/kernel.elf
 # ===== 镜像 =====
 $(IMG): boot/stage1.bin boot/stage2.bin kernel/kernel.bin
 	cat boot/stage1.bin boot/stage2.bin kernel/kernel.bin > $(IMG)
-	truncate -s 1474560 $(IMG)
+	truncate -s 2M $(IMG)
 
 # ===== 运行 =====
 run: $(IMG)
-	$(QEMU) -drive format=raw,file=$(IMG) -serial stdio -display sdl -no-reboot -vga std
+	$(QEMU) -hda $(IMG) -serial stdio -display sdl -no-reboot -vga std
 
 debug: $(IMG)
 	$(QEMU) -drive format=raw,file=$(IMG) -s -S -nographic -no-reboot
