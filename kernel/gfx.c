@@ -25,9 +25,7 @@ void gfx_init(void) {
 void putpixel(uint32_t x, uint32_t y, uint32_t color) {
     if (x >= fb_width || y >= fb_height) return;
 
-    // 直接取显存的物理地址
     uint8_t *vram = (uint8_t *)(unsigned long)(*(volatile uint32_t *)0x5000);
-    
     uint32_t offset = y * fb_pitch + x * (fb_bpp / 8);
     
     uint8_t r = (color >> 16) & 0xFF;
@@ -59,7 +57,6 @@ void fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
 void draw_char(uint32_t x, uint32_t y, char ch, uint32_t color) {
     unsigned char c = (unsigned char)ch;
     if (c < 32 || c > 126) return;
-
     uint8_t *glyph = (uint8_t *)font8x16[c - 32];
     for (int row = 0; row < 16; row++) {
         uint8_t bits = glyph[row];
@@ -72,22 +69,14 @@ void draw_char(uint32_t x, uint32_t y, char ch, uint32_t color) {
 }
 
 uint32_t draw_string(uint32_t x, uint32_t y, const char *str, uint32_t color) {
-    uint32_t start_x = x;
-    uint32_t cur_x = x;
-    uint32_t cur_y = y;
-
+    uint32_t start_x = x, cur_x = x, cur_y = y;
     while (*str) {
         char c = *str;
-        if (c == '\n') {
-            cur_x = start_x;
-            cur_y += 16;
-        } else {
+        if (c == '\n') { cur_x = start_x; cur_y += 16; }
+        else {
             draw_char(cur_x, cur_y, c, color);
             cur_x += 8;
-            if (cur_x + 8 > fb_width) {
-                cur_x = start_x;
-                cur_y += 16;
-            }
+            if (cur_x + 8 > fb_width) { cur_x = start_x; cur_y += 16; }
         }
         str++;
     }
@@ -95,37 +84,23 @@ uint32_t draw_string(uint32_t x, uint32_t y, const char *str, uint32_t color) {
 }
 
 void draw_mouse_cursor(int x, int y) {
-    // 经典 12x19 Windows 鼠标指针 (0=透明, 1=白, 2=黑)
     static const uint8_t cursor[19][12] = {
-        {2,0,0,0,0,0,0,0,0,0,0,0},
-        {2,2,0,0,0,0,0,0,0,0,0,0},
-        {2,1,2,0,0,0,0,0,0,0,0,0},
-        {2,1,1,2,0,0,0,0,0,0,0,0},
-        {2,1,1,1,2,0,0,0,0,0,0,0},
-        {2,1,1,1,1,2,0,0,0,0,0,0},
-        {2,1,1,1,1,1,2,0,0,0,0,0},
-        {2,1,1,1,1,1,1,2,0,0,0,0},
-        {2,1,1,1,1,1,1,1,2,0,0,0},
-        {2,1,1,1,1,1,1,1,1,2,0,0},
-        {2,1,1,1,1,1,1,1,1,1,2,0},
-        {2,1,1,1,1,1,1,2,2,2,2,2},
-        {2,1,1,1,2,1,1,2,0,0,0,0},
-        {2,1,1,2,0,2,1,1,2,0,0,0},
-        {2,1,2,0,0,2,1,1,2,0,0,0},
-        {2,2,0,0,0,0,2,1,1,2,0,0},
-        {0,0,0,0,0,0,2,1,1,2,0,0},
-        {0,0,0,0,0,0,0,2,1,1,2,0},
+        {2,0,0,0,0,0,0,0,0,0,0,0}, {2,2,0,0,0,0,0,0,0,0,0,0},
+        {2,1,2,0,0,0,0,0,0,0,0,0}, {2,1,1,2,0,0,0,0,0,0,0,0},
+        {2,1,1,1,2,0,0,0,0,0,0,0}, {2,1,1,1,1,2,0,0,0,0,0,0},
+        {2,1,1,1,1,1,2,0,0,0,0,0}, {2,1,1,1,1,1,1,2,0,0,0,0},
+        {2,1,1,1,1,1,1,1,2,0,0,0}, {2,1,1,1,1,1,1,1,1,2,0,0},
+        {2,1,1,1,1,1,1,1,1,1,2,0}, {2,1,1,1,1,1,1,2,2,2,2,2},
+        {2,1,1,1,2,1,1,2,0,0,0,0}, {2,1,1,2,0,2,1,1,2,0,0,0},
+        {2,1,2,0,0,2,1,1,2,0,0,0}, {2,2,0,0,0,0,2,1,1,2,0,0},
+        {0,0,0,0,0,0,2,1,1,2,0,0}, {0,0,0,0,0,0,0,2,1,1,2,0},
         {0,0,0,0,0,0,0,2,2,2,0,0}
     };
-
     for (int row = 0; row < 19; row++) {
         for (int col = 0; col < 12; col++) {
             uint8_t pixel = cursor[row][col];
-            if (pixel == 1) {
-                putpixel(x + col, y + row, 0x00FFFFFF); // 内部纯白
-            } else if (pixel == 2) {
-                putpixel(x + col, y + row, 0x00000000); // 黑色描边
-            }
+            if (pixel == 1) putpixel(x + col, y + row, 0x00FFFFFF);
+            else if (pixel == 2) putpixel(x + col, y + row, 0x00000000);
         }
     }
 }
