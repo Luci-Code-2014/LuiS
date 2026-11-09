@@ -2,7 +2,8 @@
 
 | 介绍 | 版本 | 当前 |
 | --- | --- | --- |
-| fix: 修改了 README.md 的编译要求字段, 重新提交了 Stage2 | 2.4.1 | * |
+| kernel(ata,ext4): 添加 ATA 驱动, 仅读取 rootfs.img, ext4 | 2.5.0 | * |
+| fix: 修改了 README.md 的编译要求字段, 重新提交了 Stage2 | 2.4.1 |   |
 | kernel(kmalloc): 新增 kmalloc, 支持内存管理 | 2.4.0 |   |
 | kernel(panic): 新增 panic 函数, panic 时仍支持鼠标 | 2.3.0 |   |
 | kernel(mouse): 支持鼠标. 经典 Windows 款式 | 2.2.0 |   |
