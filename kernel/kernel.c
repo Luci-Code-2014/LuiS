@@ -48,13 +48,26 @@ static void printk_int(int v) {
     while (v > 0) { buf[i++] = '0' + (v % 10); v /= 10; }
     while (i > 0) printk_putc(buf[--i]);
 }
+static void printk_hex(unsigned int v) {
+    char buf[16]; int i = 0;
+    if (v == 0) { printk_putc('0'); return; }
+    while (v > 0) {
+        int d = v & 0xF;
+        buf[i++] = (d < 10) ? ('0' + d) : ('a' + d - 10);
+        v >>= 4;
+    }
+    while (i > 0) printk_putc(buf[--i]);
+}
+
 void printk(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     while (*fmt) {
         if (*fmt == '%') {
             fmt++;
-            if (*fmt == 's') printk_puts(va_arg(ap, const char*));
+            if (*fmt == 's')      printk_puts(va_arg(ap, const char*));
             else if (*fmt == 'd') printk_int(va_arg(ap, int));
+            else if (*fmt == 'x') printk_hex(va_arg(ap, unsigned int));
+            else if (*fmt == 'c') printk_putc((char)va_arg(ap, int));
             fmt++;
         } else {
             printk_putc(*fmt++);
@@ -73,7 +86,7 @@ void redraw_file_list(void) {
     draw_box(100, 100, 400, 320, 0x00556677);
     fill_rect(102, 102, 396, 18, 0x00445566);
     draw_string(110, 104, "File System (ext4)", 0x00FFFFFF);
-    
+
     for (int i = 0; i < ext4_file_count; i++) {
         draw_string(120, 140 + i * 20, ext4_files[i], 0x00FFFFFF);
     }
@@ -88,7 +101,7 @@ void kernel_main(void) {
     ext4_init();
 
     clear_screen(0x00101820);
-    fill_rect(0, 0, 1920, 40, 0x00203040); 
+    fill_rect(0, 0, 1920, 40, 0x00203040);
     draw_string(20, 12, "LuiS OS v2.4.0", 0x00FFFFFF);
     redraw_file_list();
 
@@ -96,12 +109,12 @@ void kernel_main(void) {
     int old_y = mouse_get_y();
     draw_mouse_cursor(old_x, old_y);
 
-    __asm__ volatile ("sti"); 
+    __asm__ volatile ("sti");
 
     for (;;) {
         int mx = mouse_get_x();
         int my = mouse_get_y();
-        
+
         if (mx != old_x || my != old_y) {
             int min_x = (old_x < mx) ? old_x : mx;
             int min_y = (old_y < my) ? old_y : my;
@@ -111,7 +124,7 @@ void kernel_main(void) {
             fill_rect(min_x, min_y, max_x - min_x, max_y - min_y, 0x00101820);
 
             if (min_y < 40) {
-                fill_rect(0, 0, 1920, 40, 0x00203040); 
+                fill_rect(0, 0, 1920, 40, 0x00203040);
                 draw_string(20, 12, "LuiS OS v2.4.0", 0x00FFFFFF);
             }
 
@@ -124,7 +137,7 @@ void kernel_main(void) {
             old_x = mx;
             old_y = my;
         }
-        
+
         __asm__ volatile ("hlt");
     }
 }
