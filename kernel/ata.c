@@ -88,3 +88,16 @@ void ata_write_sector(uint16_t port, uint8_t drive, uint32_t lba, uint8_t *buffe
     ata_wait_not_busy(port);
     ata_delay_400ns(port);
 }
+
+int ata_probe(void) {
+    /* 读状态端口, 0xFF 表示无盘 */
+    uint8_t st = inb(0x1F7);
+    if (st == 0xFF) return -1;
+    /* 等 BSY 清零, 最多等一会儿 */
+    for (int i = 0; i < 100000; i++) {
+        st = inb(0x1F7);
+        if (!(st & 0x80)) break;
+    }
+    if (st == 0 || st == 0xFF) return -1;
+    return 0;
+}
