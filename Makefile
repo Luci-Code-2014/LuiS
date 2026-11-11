@@ -49,7 +49,8 @@ kernel/mouse.o: kernel/mouse.c kernel/mouse.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 kernel/kernel.o: kernel/kernel.c kernel/idt.h kernel/pic.h kernel/pit.h \
-    kernel/keyboard.h kernel/gfx.h kernel/mouse.h kernel/ext4.h
+    kernel/keyboard.h kernel/gfx.h kernel/mouse.h kernel/ext4.h \
+    kernel/blockdev.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 kernel/panic.o: kernel/panic.c kernel/panic.h
@@ -64,7 +65,13 @@ kernel/kheap.o: kernel/kheap.c kernel/kheap.h
 kernel/ata.o: kernel/ata.c kernel/ata.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-kernel/ext4.o: kernel/ext4.c kernel/ext4.h kernel/ata.h kernel/rootfs_data.h
+kernel/ahci.o: kernel/ahci.c kernel/ahci.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/blockdev.o: kernel/blockdev.c kernel/blockdev.h kernel/ahci.h kernel/ata.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/ext4.o: kernel/ext4.c kernel/ext4.h kernel/blockdev.h kernel/rootfs_data.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 kernel/rootfs.o: $(ROOTFS_IMG)
@@ -83,6 +90,8 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/kheap.o \
     kernel/panic.o \
     kernel/ata.o \
+    kernel/ahci.o \
+    kernel/blockdev.o \
     kernel/ext4.o \
     kernel/rootfs.o \
     kernel/kernel.o
@@ -105,6 +114,15 @@ run: $(IMG)
 	$(QEMU) -M pc -m 128 -hda $(IMG) -hdb $(ROOTFS_IMG) \
 	-serial stdio -display sdl -no-reboot -vga std
 
+run-ahci: $(IMG)
+	$(QEMU) -M q35 -m 128 \
+	-drive if=none,id=boot,format=raw,file=$(IMG) \
+	-drive if=none,id=root,format=raw,file=$(ROOTFS_IMG) \
+	-device ide-hd,drive=boot,bus=ide.0 \
+	-device ide-hd,drive=root,bus=ide.1 \
+	-boot c \
+	-serial stdio -display sdl -no-reboot -vga std
+
 debug: $(IMG)
 	$(QEMU) -drive format=raw,file=$(IMG) \
 	-drive format=raw,file=$(ROOTFS_IMG) \
@@ -117,4 +135,4 @@ clean:
 	rm -f kernel/entry/*.o
 	rm -f $(IMG)
 
-.PHONY: all run debug clean
+.PHONY: all run run-ahci debug clean
