@@ -110,10 +110,12 @@ $(IMG): boot/stage1.bin boot/stage2.bin kernel/kernel.bin
 	if [ $$SIZE -lt 2097152 ]; then truncate -s 2097152 $(IMG); fi
 
 # ===== 运行 =====
+# IDE 模式
 run: $(IMG)
 	$(QEMU) -M pc -m 128 -hda $(IMG) -hdb $(ROOTFS_IMG) \
 	-serial stdio -display sdl -no-reboot -vga std
 
+# AHCI 模式
 run-ahci: $(IMG)
 	$(QEMU) -M q35 -m 128 \
 	-drive if=none,id=boot,format=raw,file=$(IMG) \
