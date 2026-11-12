@@ -5,8 +5,9 @@
 
 typedef enum {
     BLOCKDEV_NONE = 0,
-    BLOCKDEV_ATA,
-    BLOCKDEV_AHCI,
+    BLOCKDEV_ATA,      /* 传统 ATA PIO (0x1F0) */
+    BLOCKDEV_AHCI,     /* AHCI (PCI BAR5) */
+    BLOCKDEV_MEM,      /* 内嵌 rootfs.img 内存盘（只读回退） */
 } blockdev_type_t;
 
 blockdev_type_t blockdev_init(void);
