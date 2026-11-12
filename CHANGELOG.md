@@ -2,7 +2,8 @@
 
 | 介绍 | 版本 | 当前 |
 | --- | --- | --- |
-| kernel(ata,ext4,rw): 读写 rootfs.img (fs/rootfs.img) | 2.6.0 | * |
+| kernel(ahci,ext4,rw): 读写 rootfs.img (fs/rootfs.img) 在 AHCI 平台 | 2.7.0 | * |
+| kernel(ata,ext4,rw): 读写 rootfs.img (fs/rootfs.img) | 2.6.0 |   |
 | kernel(ata,ext4): 添加 ATA 驱动, 仅读取 rootfs.img, ext4 | 2.5.0 |   |
 | fix: 修改了 README.md 的编译要求字段, 重新提交了 Stage2 | 2.4.1 |   |
 | kernel(kmalloc): 新增 kmalloc, 支持内存管理 | 2.4.0 |   |
