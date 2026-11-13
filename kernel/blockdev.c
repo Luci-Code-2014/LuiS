@@ -3,8 +3,7 @@
 #include "ata.h"
 #include "ahci.h"
 #include "rootfs_data.h"
-
-void printk(const char *fmt, ...);
+#include "printk.h"
 
 extern const unsigned char _binary_fs_rootfs_img_end[];
 #define ROOTFS_SIZE   ((uint64_t)((uintptr_t)_binary_fs_rootfs_img_end - (uintptr_t)_data_qemu_luis_rootfs_img))
