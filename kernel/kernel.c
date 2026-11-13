@@ -6,6 +6,7 @@
 #include "gfx.h"
 #include "mouse.h"
 #include "ext4.h"
+#include "usb.h"
 
 extern char ext4_files[16][64];
 extern int ext4_file_count;
@@ -26,9 +27,49 @@ void redraw_file_list(void) {
     }
 }
 
+// 绘制 USB 状态面板
+void draw_usb_status(void) {
+    draw_box(550, 100, 450, 320, 0x00556677);
+    fill_rect(552, 102, 446, 18, 0x00445566);
+    draw_string(560, 104, "USB xHCI / EHCI Status", 0x00FFFFFF);
+
+    if (usb_max_ports == 0) {
+        draw_string(560, 140, "USB Controller not initialized.", 0x00FF0000);
+        return;
+    }
+
+    char buf[64];
+    int cx = 560;
+    int cy = 140;
+    
+    draw_string(cx, cy, "Controller: USB Host", 0x00FFFF00); cy += 20;
+    
+    buf[0] = 'C'; buf[1] = 'o'; buf[2] = 'n'; buf[3] = 'n'; buf[4] = 'e'; buf[5] = 'c'; buf[6] = 't'; buf[7] = 'e'; buf[8] = 'd'; buf[9] = ':'; buf[10] = ' '; 
+    buf[11] = '0' + usb_connected_count;
+    buf[12] = 0;
+    draw_string(cx, cy, buf, 0x00FFFFFF); cy += 30;
+
+    for (int i = 0; i < usb_max_ports; i++) {
+        uint32_t status = usb_port_status[i];
+
+        int is_connected = (status & 1) || (status & (1 << 9));
+        
+        buf[0] = 'P'; buf[1] = 'o'; buf[2] = 'r'; buf[3] = 't'; buf[4] = ' '; 
+        buf[5] = '0' + (i + 1); buf[6] = ':'; buf[7] = ' '; buf[8] = 0;
+        draw_string(cx, cy, buf, 0x00FFFFFF);
+
+        if (is_connected) {
+            draw_string(cx + 80, cy, "[ CONNECTED ]", 0x0000FF00);  // 绿色
+        } else {
+            draw_string(cx + 80, cy, "[ EMPTY ]", 0x00888888); // 灰色
+        }
+        cy += 20;
+    }
+}
+
 /* ===== Kernel main ===== */
 void kernel_main(void) {
-    serial_init();  // 串口初始化保留在 printk.c 中, 外部只需调用
+    serial_init();
     printk("\nKernel Loaded!\n");
 
     pic_remap();
@@ -36,27 +77,16 @@ void kernel_main(void) {
     pit_init(100);
     mouse_init();
     gfx_init();
+    
     ext4_init();
+    usb_init(); 
 
-    /* ---- 调试输出 ---- */
-    printk("%[I] ext4: found %d file(s)\n", ext4_file_count);
-    for (int i = 0; i < ext4_file_count; i++) {
-        printk("%[I]   [%2d] %-20s\n", i, ext4_files[i]);
-    }
-    printk("%[I] cursor: %p, files: %p\n", (void*)&ext4_file_count, (void*)ext4_files);
-    printk("%[I] flags: %#x %#010X %b %o\n", 0xdead, 0xbeef, 5, 8);
-    printk("%[I] signed: %+d % d %05d %-6d| %ld %lld\n",
-        7, 7, 42, 42, 123456789L, 1234567890123LL);
-    printk("%[I] unsigned: %u %lu %llu %zu\n",
-        4000000000u, 123456789UL, 18446744073709551615ULL, (size_t)255);
-    printk("%[I] str: [%s] [%10s] [%-10s] [%.3s]\n", "hi", "hi", "hi", "hello");
-    printk("%[I] pct: 100%%\n\n");
-
-    /* ---- 绘制界面 ---- */
     clear_screen(0x00101820);
     fill_rect(0, 0, 1920, 40, 0x00203040);
     draw_string(20, 12, "LuiS OS v2.4.0", 0x00FFFFFF);
+    
     redraw_file_list();
+    draw_usb_status();
 
     int old_x = mouse_get_x();
     int old_y = mouse_get_y();
@@ -83,6 +113,9 @@ void kernel_main(void) {
 
             if (min_x < 500 && max_x > 100 && min_y < 420 && max_y > 100) {
                 redraw_file_list();
+            }
+            if (min_x < 1000 && max_x > 550 && min_y < 420 && max_y > 100) {
+                draw_usb_status();
             }
 
             draw_mouse_cursor(mx, my);
