@@ -2,8 +2,7 @@
 #include "panic.h"
 #include "gfx.h"
 #include "mouse.h"
-
-void printk(const char *fmt, ...);
+#include "printk.h"
 
 void panic(const char *msg, unsigned long err, unsigned long rip, unsigned long rsp) {
     // 1. 终端串口输出
