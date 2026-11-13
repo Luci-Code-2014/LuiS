@@ -1,5 +1,6 @@
 // kernel/keyboard.c
 #include "keyboard.h"
+#include "printk.h"
 
 static inline unsigned char inb(unsigned short port) {
     unsigned char ret;
@@ -55,7 +56,6 @@ void keyboard_handle_irq(void) {
     char c = scancode_ascii[sc];
     if (c) {
         char out[2] = { apply_shift(c), 0 };
-        extern void printk(const char *, ...);
         printk("%s", out);
     }
 }
