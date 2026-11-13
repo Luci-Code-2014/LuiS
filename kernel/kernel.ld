@@ -1,3 +1,4 @@
+/* kernel/kernel.ld */
 ENTRY(_start)
 
 PHDRS
