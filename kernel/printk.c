@@ -86,11 +86,11 @@ void printk(const char *fmt, ...) {
             char level = *fmt++;
             if (*fmt == ']') fmt++;
             switch (level) {
-                case 'E': printk_puts("[ERROR] "); break;
-                case 'I': printk_puts("[INFO] ");  break;
-                case 'O': printk_puts("[ OK ] ");  break;
-                case 'W': printk_puts("[WARN] ");  break;
-                default:  printk_puts("[LOG] ");   break;
+                case 'E': printk_puts("[ERROR]"); break;
+                case 'I': printk_puts("[INFO]");  break;
+                case 'O': printk_puts("[ OK ]");  break;
+                case 'W': printk_puts("[WARN]");  break;
+                default:  printk_puts("[LOG]");   break;
             }
             continue;
         }
