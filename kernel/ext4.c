@@ -1,8 +1,8 @@
+// kernel/ext4.c
 #include "ext4.h"
 #include "gfx.h"
 #include "blockdev.h"
-
-void printk(const char *fmt, ...);
+#include "printk.h"
 
 static ext4_superblock_t sb;
 static uint32_t block_size = 1024;
