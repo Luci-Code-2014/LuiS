@@ -62,6 +62,13 @@ static int get_inode_data_blocks(uint32_t inode_num, uint32_t inode_table_block,
     uint32_t inode_off = inode_offset % block_size;
 
     uint8_t *inode_buffer = (uint8_t*)0x400000;
+
+    for (int retry = 0; retry < 3; retry++) {
+        ata_read_block(inode_block, inode_buffer);
+        uint32_t flags = *(uint32_t*)(inode_buffer + inode_off + 32);
+        if (flags != 0) break;
+    }
+
     ata_read_block(inode_block, inode_buffer);
     uint8_t *inode_raw = inode_buffer + inode_off;
 
@@ -102,13 +109,11 @@ void ext4_init(void) {
         printk("%[I] ext4: [ATA 模式] 锁定目标文件: %s\n", target_name);
     }
 
-    // 使用你 dumpe2fs 里的固定参数: block_size=1024, inode 表起始块=68
     block_size = 1024;
     inode_size = 256;
     uint32_t inode_table_block = 68;
     printk("%[I] ext4: 使用参数 block_size=%d, inode 表起始块=%d\n", block_size, inode_table_block);
 
-    // 1. 获取根目录 (Inode 2) 的数据块
     uint32_t root_data_blocks[32] = {0};
     uint32_t root_block_count = 0;
     get_inode_data_blocks(2, inode_table_block, root_data_blocks, &root_block_count, 32);
@@ -118,7 +123,6 @@ void ext4_init(void) {
         return;
     }
 
-    // 2. 遍历根目录找文件
     uint8_t *dir_buffer = (uint8_t*)0x500000;
     ext4_file_count = 0;
     uint32_t target_inode_num = 0;
@@ -158,12 +162,10 @@ void ext4_init(void) {
         }
     }
 
-    // 3. 动态解析目标文件的数据块并读写
     if (target_inode_num != 0 && dev_type != BLOCKDEV_MEM) {
         uint32_t file_data_blocks[32] = {0};
         uint32_t file_block_count = 0;
 
-        // 动态解析文件所在的 Extent 树, 找到真正的数据块
         get_inode_data_blocks(target_inode_num, inode_table_block, file_data_blocks, &file_block_count, 32);
 
         if (file_block_count > 0) {
