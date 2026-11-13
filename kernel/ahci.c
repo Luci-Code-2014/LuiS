@@ -47,7 +47,7 @@ typedef struct {
 } __attribute__((packed)) hba_mem_t;
 
 static volatile hba_mem_t *hba = 0;
-static hba_port_t *cmd_port = 0;
+static volatile hba_port_t *cmd_port = 0;
 
 static int ahci_rw(uint32_t lba, void *buf, int is_write);
 
@@ -66,14 +66,14 @@ int ahci_init(void) {
 
                     uint32_t abar = pci_read32(bus, dev, fn, 0x24) & 0xFFFFFFF0;
                     if (!abar) continue;
-                    hba = (hba_mem_t *)abar;
+                    hba = (hba_mem_t *)(uintptr_t)abar;
 
                     printk("%[I] ahci: 找到控制器 ABAR=0x%x, PI=0x%x\n", abar, hba->pi);
                     hba->ghc |= (1 << 31);
 
                     for (int i = 0; i < 32; i++) {
                         if (hba->pi & (1 << i)) {
-                            hba_port_t *p = &hba->ports[i];
+                            volatile hba_port_t *p = &hba->ports[i];
 
                             p->sctl = 0x301;
                             for (volatile int d=0; d<100000; d++);
@@ -102,11 +102,12 @@ int ahci_init(void) {
 
                                 if (ahci_rw(2, ahci_dma_buf, 0) == 0) {
                                     __asm__ volatile ("mfence" ::: "memory");
-                                    for (volatile int d = 0; d < 10000; d++);
                                     uint16_t magic = *(uint16_t *)(ahci_dma_buf + 0x38);
                                     if (magic == 0xEF53) {
                                         printk("%[O] ahci: 端口 %d 成功挂载 ext4!\n", i);
                                         return 0;
+                                    } else {
+                                        printk("%[W] ahci: 端口 %d 魔数不对(0x%x)，继续找...\n", i, magic);
                                     }
                                 }
                                 cmd_port = 0;
@@ -123,18 +124,15 @@ int ahci_init(void) {
     return -1;
 }
 
-int ahci_flush(void);
-
 static int ahci_rw(uint32_t lba, void *buf, int is_write) {
     if (!cmd_port) return -1;
 
-    // 等待端口彻底空闲
-    for (int i = 0; i < 100000; i++) {
+    for (int i = 0; i < 1000000; i++) {
         if (!(cmd_port->tfd & 0x88)) break;
-        if (i == 99999) return -1;
+        if (i == 999999) return -1;
     }
 
-    cmd_port->is = 0xFFFFFFFF;
+    cmd_port->is = 0xFFFFFFFF; 
     for (int i = 0; i < 1024; i++) ahci_cmd_list[i] = 0;
     for (int i = 0; i < 256; i++) ahci_cmd_table[i] = 0;
 
@@ -143,84 +141,54 @@ static int ahci_rw(uint32_t lba, void *buf, int is_write) {
     hdr[2] = (uint32_t)(uintptr_t)ahci_cmd_table;
 
     uint8_t *fis = ahci_cmd_table;
-    fis[0] = 0x27;
-    fis[1] = 0x80;
-    fis[2] = is_write ? 0xC4 : 0x25;
+    fis[0] = 0x27; 
+    fis[1] = 0x80; 
+    fis[2] = is_write ? 0xC4 : 0x25; 
     fis[3] = 0;
     fis[4] = (uint8_t)lba;
     fis[5] = (uint8_t)(lba >> 8);
     fis[6] = (uint8_t)(lba >> 16);
-    fis[7] = 0x40;
+    fis[7] = 0x40; 
     fis[8] = 0; fis[9] = 0;
     fis[10] = 0; fis[11] = 0;
-    fis[12] = 1;
+    fis[12] = 1; 
     fis[13] = 0; fis[14] = 0; fis[15] = 0;
 
     uint32_t *prdt = (uint32_t *)(ahci_cmd_table + 128);
     prdt[0] = (uint32_t)(uintptr_t)buf;
-    prdt[3] = 511 | (1u << 31);
+    prdt[3] = 511 | (1u << 31); 
 
+    __asm__ volatile("mfence" ::: "memory"); 
+
+    // 触发 AHCI 硬件
     cmd_port->ci = 1;
-
-    // 强制延迟, 给 QEMU 启动 DMA 引擎的时间, 防止一上来直接命中假成功
-    for (volatile int d = 0; d < 10000; d++);
+    
+    // 给虚拟 DMA 引擎一点点时间启动
+    for (volatile int d = 0; d < 1000; d++) {
+        __asm__ volatile("pause");
+    }
 
     for (int i = 0; i < 1000000; i++) {
-        uint32_t ci = cmd_port->ci;
         uint32_t tfd = cmd_port->tfd;
+        uint32_t ci = cmd_port->ci;
 
         if (tfd & 0x01) {
-            return -1; // 硬件错误
+            printk("%[E] ahci: 传输错误 TFD=0x%x\n", tfd);
+            return -1;
         }
-
+    
         if (!(ci & 1)) {
-            __asm__ volatile ("mfence" ::: "memory");
-            return 0; // CI 被硬件正常清除
-        }
-
-        // 如果 CI 为 1, 但 TFD 的 BSY(0x80) 和 DRQ(0x08) 都消失了, 说明 DMA 已经完成，但 QEMU 忘了清 CI
-        if ((tfd & 0x80) == 0 && (tfd & 0x08) == 0) {
-            cmd_port->ci = 0; // 手动强清 CI
-            __asm__ volatile ("mfence" ::: "memory");
+            __asm__ volatile("mfence" ::: "memory"); 
             return 0;
         }
 
-        if (i == 999999) return -1;
+        if ((tfd & 0x80) == 0 && (tfd & 0x08) == 0) {
+            cmd_port->ci = 0;
+            __asm__ volatile("mfence" ::: "memory"); 
+            return 0;
+        }
     }
-    return 0;
-}
-
-// 强制将 AHCI 控制器缓存刷入物理介质
-int ahci_flush(void) {
-    if (!cmd_port) return -1;
-
-    for (int i = 0; i < 100000; i++) {
-        if (!(cmd_port->tfd & 0x88)) break;
-        if (i == 99999) return -1;
-    }
-
-    cmd_port->is = 0xFFFFFFFF;
-    for (int i = 0; i < 1024; i++) ahci_cmd_list[i] = 0;
-    for (int i = 0; i < 256; i++) ahci_cmd_table[i] = 0;
-
-    uint32_t *hdr = (uint32_t *)ahci_cmd_list;
-    hdr[0] = 5 | (1 << 16) | (1 << 6); // Write 模式
-    hdr[2] = (uint32_t)(uintptr_t)ahci_cmd_table;
-
-    uint8_t *fis = ahci_cmd_table;
-    fis[0] = 0x27;
-    fis[1] = 0x80;
-    fis[2] = 0xEA; // FLUSH CACHE 命令
-    fis[3] = 0;
-
-    cmd_port->ci = 1;
-
-    for (int i = 0; i < 1000000; i++) {
-        if (!(cmd_port->ci & 1)) return 0;
-        if (cmd_port->tfd & 0x01) return -1;
-        if (i == 999999) return -1;
-    }
-    return 0;
+    return -1;
 }
 
 int ahci_read_sector(uint32_t lba, void *buf) { return ahci_rw(lba, buf, 0); }
