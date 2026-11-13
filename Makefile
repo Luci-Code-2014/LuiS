@@ -74,6 +74,9 @@ kernel/blockdev.o: kernel/blockdev.c kernel/blockdev.h kernel/ahci.h kernel/ata.
 kernel/ext4.o: kernel/ext4.c kernel/ext4.h kernel/blockdev.h kernel/rootfs_data.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
+kernel/printk.o: kernel/printk.c kernel/printk.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
 kernel/rootfs.o: $(ROOTFS_IMG)
 	$(LD) -r -b binary $< -o $@
 
@@ -94,7 +97,8 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/blockdev.o \
     kernel/ext4.o \
     kernel/rootfs.o \
-    kernel/kernel.o
+    kernel/kernel.o \
+	kernel/printk.o
 
 kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
 	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
