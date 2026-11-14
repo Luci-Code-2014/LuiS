@@ -50,7 +50,7 @@ kernel/mouse.o: kernel/mouse.c kernel/mouse.h
 
 kernel/kernel.o: kernel/kernel.c kernel/idt.h kernel/pic.h kernel/pit.h \
     kernel/keyboard.h kernel/gfx.h kernel/mouse.h kernel/ext4.h \
-    kernel/blockdev.h
+    kernel/blockdev.h kernel/usb.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 kernel/panic.o: kernel/panic.c kernel/panic.h
@@ -77,7 +77,14 @@ kernel/ext4.o: kernel/ext4.c kernel/ext4.h kernel/blockdev.h kernel/rootfs_data.
 kernel/printk.o: kernel/printk.c kernel/printk.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-kernel/usb.o: kernel/usb.c kernel/usb.h
+# ===== USB xHCI 相关 =====
+kernel/usb.o: kernel/usb.c kernel/usb.h kernel/xhci.h kernel/usb_hid.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/xhci.o: kernel/xhci.c kernel/xhci.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/usb_hid.o: kernel/usb_hid.c kernel/usb_hid.h kernel/xhci.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 kernel/rootfs.o: $(ROOTFS_IMG)
@@ -101,8 +108,10 @@ KERNEL_OBJS := kernel/entry/kernel_entry.o \
     kernel/ext4.o \
     kernel/rootfs.o \
     kernel/kernel.o \
-	kernel/printk.o \
-	kernel/usb.o
+    kernel/printk.o \
+    kernel/usb.o \
+    kernel/xhci.o \
+    kernel/usb_hid.o
 
 kernel/kernel.elf: $(KERNEL_OBJS) kernel/kernel.ld
 	$(LD) -T kernel/kernel.ld -o $@ $(KERNEL_OBJS)
@@ -118,21 +127,15 @@ $(IMG): boot/stage1.bin boot/stage2.bin kernel/kernel.bin
 	if [ $$SIZE -lt 2097152 ]; then truncate -s 2097152 $(IMG); fi
 
 # ===== 运行 =====
-# IDE 模式
-run-ide: $(IMG)
-	$(QEMU) -M pc -m 128 -hda $(IMG) -hdb $(ROOTFS_IMG) \
-	-serial stdio -display sdl -no-reboot -vga std
-
-# AHCI 模式
 run: $(IMG)
 	$(QEMU) -M q35 -m 128 \
 	-drive if=none,id=boot,format=raw,file=$(IMG) \
 	-drive if=none,id=root,format=raw,file=$(ROOTFS_IMG) \
 	-device ide-hd,drive=boot,bus=ide.0 \
 	-device ide-hd,drive=root,bus=ide.1 \
-	-device usb-ehci \
-	-device usb-kbd \
-	-device usb-tablet \
+	-device qemu-xhci,id=xhci \
+	-device usb-kbd,bus=xhci.0 \
+	-device usb-tablet,bus=xhci.0 \
 	-boot c \
 	-serial stdio -display sdl -no-reboot -vga std
 
@@ -148,4 +151,4 @@ clean:
 	rm -f kernel/entry/*.o
 	rm -f $(IMG)
 
-.PHONY: all run run-ahci debug clean
+.PHONY: all run debug clean
