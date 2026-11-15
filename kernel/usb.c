@@ -14,6 +14,7 @@ static void pci_write32(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off, uint3
     outl(0xCFC, v);
 }
 
+/* ==================== 全局状态 ==================== */
 int usb_max_ports = 0;
 int usb_connected_count = 0;
 uint32_t usb_port_status[32] = {0};
@@ -21,409 +22,292 @@ char usb_last_key = 0;
 int usb_last_mouse_dx = 0;
 int usb_last_mouse_dy = 0;
 
-// ================= xHCI 寄存器与常量 =================
+/* ==================== 内存池 ==================== */
+static uint8_t usb_mem_pool[128 * 1024] __attribute__((aligned(4096)));
+static uint32_t usb_mem_ptr = 0;
+static void *usb_alloc(uint32_t size) {
+    if (usb_mem_ptr + size > sizeof(usb_mem_pool)) return 0;
+    void *ret = &usb_mem_pool[usb_mem_ptr];
+    usb_mem_ptr += size;
+    usb_mem_ptr = (usb_mem_ptr + 63) & ~63;
+    return ret;
+}
+
+/* ==================== 描述符结构 ==================== */
+typedef struct { uint8_t bLength; uint8_t bDescriptorType; } __attribute__((packed)) usb_desc_hdr_t;
+typedef struct {
+    uint8_t bLength; uint8_t bDescriptorType; uint16_t wTotalLength;
+    uint8_t bNumInterfaces; uint8_t bConfigurationValue;
+    uint8_t iConfiguration; uint8_t bmAttributes; uint8_t bMaxPower;
+} __attribute__((packed)) usb_config_desc_t;
+typedef struct {
+    uint8_t bLength; uint8_t bDescriptorType; uint8_t bInterfaceNumber;
+    uint8_t bAlternateSetting; uint8_t bNumEndpoints; uint8_t bInterfaceClass;
+    uint8_t bInterfaceSubClass; uint8_t bInterfaceProtocol;
+} __attribute__((packed)) usb_iface_desc_t;
+typedef struct {
+    uint8_t bLength; uint8_t bDescriptorType; uint8_t bEndpointAddress;
+    uint8_t bmAttributes; uint16_t wMaxPacketSize; uint8_t bInterval;
+} __attribute__((packed)) usb_ep_desc_t;
+
+/* ==================== 寄存器偏移 ==================== */
+#define XHCI_CAPLENGTH     0x00
+#define XHCI_HCSPARAMS1    0x04
+#define XHCI_DBOFF         0x14
+#define XHCI_RTSOFF        0x18
 #define XHCI_USBCMD        0x00
 #define XHCI_USBSTS        0x04
 #define XHCI_CRCR          0x18
 #define XHCI_DCBAAP        0x30
 #define XHCI_CONFIG        0x38
-#define XHCI_PORTSC_BASE   0x400
-
-#define XHCI_IMAN          0x00
-#define XHCI_ERSTSZ        0x08
-#define XHCI_ERSTBA        0x10
-#define XHCI_ERDP          0x18
-
-#define PORTSC_CCS         (1u << 0)
-#define PORTSC_PED         (1u << 1)
-#define PORTSC_PR          (1u << 4)
-#define PORTSC_PRC         (1u << 21)
-#define PORTSC_PP          (1u << 9)
-
-#define TRB_NORMAL         1
-#define TRB_SETUP          2
-#define TRB_DATA           3
-#define TRB_STATUS         4
-#define TRB_ENABLE_SLOT    9
-#define TRB_ADDRESS_DEVICE 11
-#define TRB_CONFIGURE_EP   12
-#define TRB_TRANSFER_EVENT 32
-#define TRB_CMD_COMPLETE   33
 
 typedef struct { uint32_t param_lo; uint32_t param_hi; uint32_t status; uint32_t control; } __attribute__((packed)) trb_t;
-typedef struct { uint8_t bmRequestType; uint8_t bRequest; uint16_t wValue; uint16_t wIndex; uint16_t wLength; } __attribute__((packed)) setup_pkt_t;
+typedef struct { uint64_t base; uint32_t size; uint32_t rsv; } __attribute__((packed)) erst_entry_t;
 
-// ================= 全局状态 =================
-static volatile uint8_t  *bar = 0;
-static volatile uint32_t *op  = 0;
-static volatile uint32_t *rt  = 0;
-static uint32_t *doorbell = 0;
+static volatile uint8_t  *xhci_cap = 0;
+static volatile uint32_t *xhci_op  = 0;
+static volatile uint32_t *xhci_rt  = 0;
+static uint32_t *xhci_doorbell = 0;
 
 static trb_t *cmd_ring = 0;
-static uint32_t cmd_enq = 0;
-static uint32_t cmd_cycle = 1;
+static uint32_t cmd_ring_idx = 0;
+static uint32_t cmd_ring_cycle = 1;
 
-static trb_t *evt_ring = 0;
-static uint64_t *erst = 0;
-static uint32_t evt_deq = 0;
-static uint32_t evt_cycle = 1;
-
+static trb_t *ep0_ring = 0;
+static trb_t *ep_in_ring = 0;
 static uint64_t *dcbaa = 0;
-static uint32_t n_ports = 0;
-static int inited = 0;
+static uint32_t slot_id = 0;
+static uint32_t xhci_hid_dci = 0;
+static uint8_t hid_ep_maxpkt = 8;
+static uint8_t is_mouse = 0;
 
-static uint32_t kbd_slot = 0;
-static uint32_t kbd_dci = 0;
-static trb_t *kbd_ring = 0;
-static uint32_t kbd_enq = 0;
-static uint32_t kbd_cycle = 1;
-static uint8_t *kbd_buf = 0;
-static int kbd_ready = 0;
+static trb_t *event_ring = 0;
+static erst_entry_t *erst = 0;
+static uint32_t event_idx = 0;
 
-// 内存池
-static uint8_t usb_mem_pool[512 * 1024] __attribute__((aligned(4096)));
-static uint32_t usb_mem_ptr = 0;
+static uint8_t input_ctx[4096] __attribute__((aligned(4096)));
+static uint8_t dev_ctx[4096] __attribute__((aligned(4096)));
+static uint8_t keyboard_report[8] __attribute__((aligned(64)));
 
-static void *usb_alloc(uint32_t size) {
-    usb_mem_ptr = (usb_mem_ptr + 63) & ~63;
-    if (usb_mem_ptr + size > sizeof(usb_mem_pool)) return 0;
-    void *ret = &usb_mem_pool[usb_mem_ptr];
-    usb_mem_ptr += size;
-    return ret;
+static void xhci_ring_doorbell(uint32_t slot, uint32_t target) {
+    xhci_doorbell[slot] = target;
 }
 
-// 强制刷写缓存, 确保 DMA 可见
-static inline void flush_cache(void *addr, uint32_t size) {
-    uint64_t start = (uint64_t)(uintptr_t)addr & ~63ULL;
-    uint64_t end = ((uint64_t)(uintptr_t)addr + size + 63) & ~63ULL;
-    for (uint64_t p = start; p < end; p += 64) {
-        __asm__ volatile("clflush (%0)" :: "r"(p) : "memory");
-    }
-    __asm__ volatile("mfence" ::: "memory");
-}
+// 发送命令并等待事件
+static int xhci_send_command(uint32_t trb_type, uint32_t param_lo, uint32_t param_hi, uint32_t status, uint32_t control_flags, const char *tag) {
+    trb_t *trb = &cmd_ring[cmd_ring_idx];
+    trb->param_lo = param_lo;
+    trb->param_hi = param_hi;
+    trb->status = status;
+    trb->control = (trb_type << 10) | control_flags | cmd_ring_cycle;
 
-// ================= 命令环与事件环操作 =================
-static void cmd_push(trb_t t) {
-    t.control = (t.control & ~1u) | cmd_cycle;
-    cmd_ring[cmd_enq] = t;
-    cmd_enq = (cmd_enq + 1) % 256;
-    if (cmd_enq == 0) cmd_cycle ^= 1;
-    flush_cache(cmd_ring, 256 * 16);
-    doorbell[0] = 0; // 响铃
-}
+    cmd_ring_idx = (cmd_ring_idx + 1) % 256;
+    xhci_ring_doorbell(0, 0);
 
-// 等待事件, 并正确清除 ERDP 的 EHB 位
-static uint32_t wait_event(uint32_t expected_type) {
-    for (int t = 0; t < 10000000; t++) {
-        trb_t *ev = &evt_ring[evt_deq];
-        if ((ev->control & 1) == evt_cycle) {
+    volatile uint32_t *intr0 = (volatile uint32_t *)((uint8_t *)xhci_rt + 0x20);
+    for (int i = 0; i < 1000000; i++) {
+        trb_t *ev = &event_ring[event_idx];
+        if (ev->control & 1) {
             uint32_t type = (ev->control >> 10) & 0x3F;
-            if (type == expected_type) {
-                uint32_t code = (ev->status >> 24) & 0xFF;
-                uint32_t slot = (ev->control >> 24) & 0xFF;
-
-                evt_deq = (evt_deq + 1) % 256;
-                if (evt_deq == 0) evt_cycle ^= 1;
-
-                uint64_t erdp = (uint64_t)(uintptr_t)&evt_ring[evt_deq];
-                rt[XHCI_ERDP/4]     = (uint32_t)erdp | (1u << 3); // Bit 3 = EHB, 写1清除
-                rt[XHCI_ERDP/4 + 1] = (uint32_t)(erdp >> 32);
-
-                if (expected_type == TRB_CMD_COMPLETE) return (code == 1) ? slot : 0;
-                return code;
+            if (type == 33) { // Command Completion Event
+                // 检查返回状态
+                uint32_t comp_code = (ev->status >> 24) & 0xFF;
+                if (comp_code != 1) { // 1 = Success
+                    printk("%[E] usb: [%s] 命令失败, 代码=%d\n", tag, comp_code);
+                }
+                ev->control &= ~1;
+                event_idx = (event_idx + 1) % 64;
+                intr0[6] = (uint32_t)(uintptr_t)&event_ring[event_idx] | (1 << 3);
+                return comp_code;
             }
-            // 非预期事件, 直接跳过
-            evt_deq = (evt_deq + 1) % 256;
-            if (evt_deq == 0) evt_cycle ^= 1;
+            ev->control &= ~1;
+            event_idx = (event_idx + 1) % 64;
+            intr0[6] = (uint32_t)(uintptr_t)&event_ring[event_idx] | (1 << 3);
+            return 0;
         }
         __asm__ volatile("pause");
     }
-    return 0;
+    printk("%[E] usb: [%s] 超时\n", tag);
+    return -1;
 }
 
-// ================= xHCI 初始化 =================
-static int xhci_init(volatile uint8_t *b) {
-    if (inited) return 0;
-    bar = b;
-    usb_mem_ptr = 0;
-    cmd_enq = 0;
-    cmd_cycle = 1;
-    evt_deq = 0;
-    evt_cycle = 1;
+// 标准控制传输
+static void xhci_control_transfer(uint32_t slot, uint8_t req_type, uint8_t req, uint16_t val, uint16_t idx, uint16_t len, void *data) {
+    uint64_t ptr = (uint64_t)(uintptr_t)data;
+    uint32_t trb_idx = 0;
 
-    uint8_t caplen = bar[0x00];
-    op = (volatile uint32_t *)(bar + caplen);
-    rt = (volatile uint32_t *)(bar + (*(volatile uint32_t *)(bar + 0x18) & ~0x1Fu));
-    doorbell = (uint32_t *)(bar + (*(volatile uint32_t *)(bar + 0x14) & ~0x3u));
+    trb_t *trb = &ep0_ring[trb_idx++];
+    trb->param_lo = (req_type) | (req << 8) | ((uint32_t)val << 16) | ((uint32_t)idx << 24);
+    trb->param_hi = (idx >> 8) | ((uint32_t)len << 16);
+    trb->status = 8;
+    uint32_t trt = 0;
+    if (len > 0) trt = (req_type & 0x80) ? 3 : 2;
+    trb->control = (2 << 10) | (trt << 16) | (1 << 6) | (1 << 4) | 1;
 
-    uint32_t hcsparams1 = *(volatile uint32_t *)(bar + 0x04);
-    uint32_t hcsparams2 = *(volatile uint32_t *)(bar + 0x08);
-    n_ports   = hcsparams1 & 0xFF;
-    uint32_t max_slots = (hcsparams1 >> 24) & 0xFF;
-    if (n_ports > 32) n_ports = 32;
-
-    // 1. 停止并复位控制器
-    op[XHCI_USBCMD/4] &= ~1u;
-    for (int t = 0; t < 1000000; t++) if (op[XHCI_USBSTS/4] & 1u) break;
-    op[XHCI_USBCMD/4] |= (1u << 1);
-    for (int t = 0; t < 1000000; t++) if (!(op[XHCI_USBCMD/4] & (1u << 1))) break;
-    for (int t = 0; t < 1000000; t++) if (!(op[XHCI_USBSTS/4] & (1u << 11))) break;
-
-    // 2. 分配核心数据结构
-    dcbaa    = (uint64_t *)usb_alloc(256 * 8);
-    cmd_ring = (trb_t *)usb_alloc(256 * 16);
-    evt_ring = (trb_t *)usb_alloc(256 * 16);
-    erst     = (uint64_t *)usb_alloc(16);
-    for (uint32_t i = 0; i < 256 * 8; i++) ((uint8_t *)dcbaa)[i] = 0;
-    for (uint32_t i = 0; i < 256 * 16; i++) ((uint8_t *)cmd_ring)[i] = 0;
-    for (uint32_t i = 0; i < 256 * 16; i++) ((uint8_t *)evt_ring)[i] = 0;
-    for (uint32_t i = 0; i < 16; i++) ((uint8_t *)erst)[i] = 0;
-
-    // 3. Scratchpad Buffer (若需要)
-    uint32_t max_scratchpad = (hcsparams2 >> 21) & 0x1F;
-    if (max_scratchpad == 0) max_scratchpad = (hcsparams2 >> 27) & 0x1F;
-    if (max_scratchpad > 0) {
-        uint64_t *scratchpad_array = (uint64_t *)usb_alloc(max_scratchpad * 8);
-        for (uint32_t i = 0; i < max_scratchpad; i++) scratchpad_array[i] = (uint64_t)(uintptr_t)usb_alloc(4096);
-        dcbaa[0] = (uint64_t)(uintptr_t)scratchpad_array;
-    } else {
-        dcbaa[0] = 0;
+    if (len > 0) {
+        trb = &ep0_ring[trb_idx++];
+        trb->param_lo = (uint32_t)ptr;
+        trb->param_hi = ptr >> 32;
+        trb->status = len;
+        trb->control = (3 << 10) | ((req_type & 0x80) ? (1 << 16) : 0) | (1 << 4) | 1;
     }
 
-    op[XHCI_DCBAAP/4]   = (uint32_t)(uintptr_t)dcbaa;
-    op[XHCI_DCBAAP/4+1] = 0;
-    op[XHCI_CRCR/4]     = (uint32_t)(uintptr_t)cmd_ring | 1u;
-    op[XHCI_CRCR/4+1]   = 0;
+    trb = &ep0_ring[trb_idx++];
+    trb->param_lo = 0;
+    trb->param_hi = 0;
+    trb->status = 0;
+    trb->control = (4 << 10) | ((req_type & 0x80) ? 0 : (1 << 16)) | (1 << 5) | 1;
 
-    erst[0] = (uint64_t)(uintptr_t)evt_ring;
-    erst[1] = 256;
-    rt[XHCI_ERSTSZ/4]   = 1;
-    rt[XHCI_ERSTBA/4]   = (uint32_t)(uintptr_t)erst;
-    rt[XHCI_ERSTBA/4+1] = 0;
+    xhci_ring_doorbell(slot, 1);
 
-    uint64_t erdp = (uint64_t)(uintptr_t)evt_ring;
-    rt[XHCI_ERDP/4]     = (uint32_t)erdp | (1u << 3);
-    rt[XHCI_ERDP/4+1]   = (uint32_t)(erdp >> 32);
-    rt[XHCI_IMAN/4]     = 0; // 纯轮询, 不依赖中断
-
-    op[XHCI_CONFIG/4] = max_slots;
-    flush_cache(dcbaa, 256 * 8);
-    flush_cache(erst, 16);
-    __asm__ volatile("mfence" ::: "memory");
-
-    // 5. 启动控制器
-    op[XHCI_USBCMD/4] = 1;
-    for (int t = 0; t < 1000000; t++) if (!(op[XHCI_USBSTS/4] & 1u)) break;
-
-    // 6. 端口上电
-    for (int i = 0; i < (int)n_ports; i++) {
-        uint32_t s = op[(XHCI_PORTSC_BASE + i*0x10)/4];
-        if ((s & PORTSC_CCS) && !(s & PORTSC_PP)) op[(XHCI_PORTSC_BASE + i*0x10)/4] = s | PORTSC_PP;
-    }
-
-    inited = 1;
-    return 0;
-}
-
-// ================= 端口复位与设备枚举 =================
-static uint32_t portsc_read(int p) { return op[(XHCI_PORTSC_BASE + p*0x10)/4]; }
-static void portsc_write(int p, uint32_t v) { op[(XHCI_PORTSC_BASE + p*0x10)/4] = v; }
-
-static int port_reset(int p) {
-    uint32_t s = portsc_read(p);
-    if (!(s & PORTSC_CCS)) return -1;
-    if (!(s & PORTSC_PP)) {
-        portsc_write(p, s | PORTSC_PP);
-        for (int t = 0; t < 100000; t++) if ((s = portsc_read(p)) & PORTSC_PP) break;
-    }
-    portsc_write(p, (s & PORTSC_PED) | PORTSC_PR);
-    for (int t = 0; t < 2000000; t++) if ((s = portsc_read(p)) & PORTSC_PRC) break;
-    if (!(s & PORTSC_PRC)) return -1;
-    portsc_write(p, (s & PORTSC_PED) | PORTSC_PRC);
-    for (int t = 0; t < 2000000; t++) if (portsc_read(p) & PORTSC_PED) break;
-    return 0;
-}
-
-static int ctrl_transfer(uint32_t slot, setup_pkt_t *setup, void *buf) {
-    static trb_t *ctrl_ring = 0;
-    static uint32_t ctrl_enq = 0;
-    static uint32_t ctrl_cycle = 1;
-    if (!ctrl_ring) ctrl_ring = (trb_t *)usb_alloc(256 * 16);
-
-    trb_t t = {0};
-    t.param_lo = *(uint32_t *)setup;
-    t.param_hi = *(uint32_t *)((uint8_t *)setup + 4);
-    t.status = (8u << 17);
-    t.control = (TRB_SETUP << 10) | (1u << 6) | (1u << 5) |
-                ((setup->wLength ? ((setup->bmRequestType & 0x80) ? 3u : 2u) : 0u) << 16) | ctrl_cycle;
-    ctrl_ring[ctrl_enq] = t;
-    ctrl_enq = (ctrl_enq + 1) % 256; if (ctrl_enq == 0) ctrl_cycle ^= 1;
-
-    if (setup->wLength) {
-        trb_t d = {0};
-        d.param_lo = (uint32_t)(uintptr_t)buf; d.param_hi = 0;
-        d.status = (setup->wLength << 17) | (setup->wLength << 0);
-        d.control = (TRB_DATA << 10) | (((setup->bmRequestType & 0x80) ? 1u : 0u) << 16) | (1u << 5) | ctrl_cycle;
-        ctrl_ring[ctrl_enq] = d;
-        ctrl_enq = (ctrl_enq + 1) % 256; if (ctrl_enq == 0) ctrl_cycle ^= 1;
-    }
-
-    trb_t s = {0};
-    s.control = (TRB_STATUS << 10) | (1u << 5) |
-                ((setup->wLength ? ((setup->bmRequestType & 0x80) ? 0u : 1u) : 1u) << 16) | ctrl_cycle;
-    ctrl_ring[ctrl_enq] = s;
-    ctrl_enq = (ctrl_enq + 1) % 256; if (ctrl_enq == 0) ctrl_cycle ^= 1;
-
-    flush_cache(ctrl_ring, 256 * 16);
-    doorbell[slot] = 1; // EP0 DCI = 1
-
-    return (wait_event(TRB_TRANSFER_EVENT) == 1) ? 0 : -1;
-}
-
-static uint8_t *cfg_desc = 0;
-
-static int find_kbd_ep(void) {
-    uint8_t *p = cfg_desc;
-    uint32_t total = p[2] | (p[3] << 8);
-    uint32_t off = p[0];
-    while (off < total) {
-        uint8_t len = p[off], type = p[off + 1];
-        if (len == 0) break;
-        if (type == 0x04) { // 接口描述符
-            uint8_t cls = p[off + 5], sub = p[off + 6], pro = p[off + 7];
-            if (cls == 3 && sub == 1 && pro == 1) { // HID Boot Keyboard
-                uint32_t ep_off = off + len;
-                while (ep_off < total) {
-                    uint8_t elen = p[ep_off], etype = p[ep_off + 1];
-                    if (elen == 0) break;
-                    if (etype == 0x04) break; // 下一个接口
-                    if (etype == 0x05) { // 端点描述符
-                        uint8_t addr = p[ep_off + 2], attr = p[ep_off + 3];
-                        if ((attr & 0x03) == 0x03 && (addr & 0x80)) { // 中断 IN 端点
-                            uint8_t ep_num = addr & 0x0F;
-                            kbd_dci = (ep_num * 2) + 1; // IN 端点 DCI
-                            return ep_num;
-                        }
-                    }
-                    ep_off += elen;
+    // 等待传输完成
+    volatile uint32_t *intr0 = (volatile uint32_t *)((uint8_t *)xhci_rt + 0x20);
+    for (int i = 0; i < 1000000; i++) {
+        trb_t *ev = &event_ring[event_idx];
+        if (ev->control & 1) {
+            uint32_t type = (ev->control >> 10) & 0x3F;
+            if (type == 32) { // Transfer Event
+                uint32_t comp_code = (ev->status >> 24) & 0xFF;
+                if (comp_code != 1) {
+                    printk("%[E] usb: 控制传输失败, 代码=%d\n", comp_code);
                 }
+                ev->control &= ~1;
+                event_idx = (event_idx + 1) % 64;
+                intr0[6] = (uint32_t)(uintptr_t)&event_ring[event_idx] | (1 << 3);
+                return;
+            }
+            ev->control &= ~1;
+            event_idx = (event_idx + 1) % 64;
+            intr0[6] = (uint32_t)(uintptr_t)&event_ring[event_idx] | (1 << 3);
+            return;
+        }
+        __asm__ volatile("pause");
+    }
+    printk("%[E] usb: 控制传输超时\n");
+}
+
+static void xhci_init(volatile uint8_t *bar) {
+    xhci_cap = bar;
+    xhci_op = (volatile uint32_t *)(bar + bar[0]);
+    uint32_t rt_off = *(volatile uint32_t *)(bar + XHCI_RTSOFF) & ~0x1F;
+    xhci_rt = (volatile uint32_t *)(bar + rt_off);
+    uint32_t db_off = *(volatile uint32_t *)(bar + XHCI_DBOFF) & ~0x3;
+    xhci_doorbell = (uint32_t *)(bar + db_off);
+
+    uint32_t hcsparams1 = *(volatile uint32_t *)(bar + XHCI_HCSPARAMS1);
+    usb_max_ports = hcsparams1 & 0xFF;
+    uint32_t max_slots = (hcsparams1 >> 24) & 0xFF;
+
+    xhci_op[XHCI_USBCMD / 4] = (1 << 1);
+    while (xhci_op[XHCI_USBCMD / 4] & (1 << 1));
+    printk("%[O] usb: 控制器复位完成\n");
+
+    dcbaa = (uint64_t *)usb_alloc(256 * 8);
+    cmd_ring = (trb_t *)usb_alloc(256 * 16);
+    ep0_ring = (trb_t *)usb_alloc(256 * 16);
+    ep_in_ring = (trb_t *)usb_alloc(256 * 16);
+    event_ring = (trb_t *)usb_alloc(256 * 16);
+    erst = (erst_entry_t *)usb_alloc(sizeof(erst_entry_t));
+
+    erst[0].base = (uint64_t)(uintptr_t)event_ring;
+    erst[0].size = 64;
+    volatile uint32_t *intr0 = (volatile uint32_t *)((uint8_t *)xhci_rt + 0x20);
+    intr0[2] = 1;
+    intr0[4] = (uint32_t)(uintptr_t)erst;
+    intr0[5] = 0;
+    intr0[6] = (uint32_t)(uintptr_t)event_ring | (1 << 3);
+    intr0[7] = 0;
+    printk("%[O] usb: Event Ring 初始化完成\n");
+
+    xhci_op[XHCI_DCBAAP / 4] = (uint32_t)(uintptr_t)dcbaa;
+    xhci_op[XHCI_CRCR / 4] = (uint32_t)(uintptr_t)cmd_ring | 1;
+    xhci_op[XHCI_CONFIG / 4] = max_slots;
+    xhci_op[XHCI_USBCMD / 4] = 1;
+
+    volatile uint32_t *portsc = (volatile uint32_t *)((uint8_t *)xhci_op + 0x400);
+    usb_connected_count = 0;
+    uint32_t connected_port = 0;
+    for (int i = 0; i < usb_max_ports; i++) {
+        uint32_t status = portsc[i];
+        if (status & 1) {
+            printk("%[I] usb: 端口 %d 发现设备\n", i + 1);
+            usb_connected_count++;
+            connected_port = i;
+            portsc[i] = (status & ~(0xE01C)) | (1 << 4);
+            for(int t=0; t<1000000; t++) {
+                if (!(portsc[i] & (1 << 4))) break;
+            }
+            printk("%[O] usb: 端口 %d 复位完成\n", i + 1);
+            break;
+        }
+    }
+
+    if (usb_connected_count == 0) return;
+
+    // 发送 Enable Slot (Type = 11)
+    xhci_send_command(11, 0, 0, 0, 0, "Enable Slot");
+
+    input_ctx[0] = 1; input_ctx[1] = 0;
+    uint32_t *ep0_ctx = (uint32_t *)(input_ctx + 0x40);
+    ep0_ctx[1] = (3 << 1);
+    ep0_ctx[2] = (uint32_t)(uintptr_t)ep0_ring | 1;
+    ep0_ctx[3] = 8;
+    dcbaa[slot_id] = (uint64_t)(uintptr_t)dev_ctx;
+
+    xhci_send_command(12, (uint32_t)(uintptr_t)input_ctx, (uint32_t)((uintptr_t)input_ctx >> 32), 0, (slot_id << 24), "Address Device");
+
+    uint8_t config_data[256];
+    for(int i = 0; i < 256; i++) config_data[i] = 0;
+
+    xhci_control_transfer(slot_id, 0x80, 0x06, 0x0200, 0x0000, 9, config_data);
+    uint16_t total_len = *(uint16_t*)(config_data + 2);
+    printk("%[I] usb: 描述符总长度 = %d\n", total_len);
+    if (total_len == 0 || total_len > 256) total_len = 256;
+
+    xhci_control_transfer(slot_id, 0x80, 0x06, 0x0200, 0x0000, total_len, config_data);
+
+    printk("%[I] usb: 描述符数据头: %02x %02x %02x %02x\n", config_data[0], config_data[1], config_data[2], config_data[3]);
+
+    uint8_t *ptr = config_data;
+    uint8_t *end = config_data + total_len;
+    uint8_t config_value = 1;
+
+    while (ptr < end) {
+        usb_desc_hdr_t *hdr = (usb_desc_hdr_t *)ptr;
+        if (hdr->bLength == 0 || hdr->bLength > 64) break;
+
+        if (hdr->bDescriptorType == 0x02) config_value = ((usb_config_desc_t *)ptr)->bConfigurationValue;
+        else if (hdr->bDescriptorType == 0x04) {
+            usb_iface_desc_t *iface = (usb_iface_desc_t *)ptr;
+            if (iface->bInterfaceClass == 3) is_mouse = (iface->bInterfaceProtocol == 2);
+        } else if (hdr->bDescriptorType == 0x05) {
+            usb_ep_desc_t *ep = (usb_ep_desc_t *)ptr;
+            if (ep->bEndpointAddress & 0x80) {
+                hid_ep_maxpkt = ep->wMaxPacketSize & 0x7FF;
+                xhci_hid_dci = ((ep->bEndpointAddress & 0x0F) * 2) + 1;
+                printk("%[O] usb: 找到端点 DCI=%d, MaxPacket=%d\n", xhci_hid_dci, hid_ep_maxpkt);
             }
         }
-        off += len;
+        ptr += hdr->bLength;
     }
-    return 0;
+
+    if (xhci_hid_dci == 0) {
+        printk("%[E] usb: 未找到端点\n");
+        return;
+    }
+
+    xhci_control_transfer(slot_id, 0x00, 0x09, config_value, 0x0000, 0, 0);
+
+    uint32_t *ep_in_ctx = (uint32_t *)(input_ctx + (0x20 * xhci_hid_dci));
+    ep_in_ctx[1] = (7 << 1) | 3;
+    ep_in_ctx[2] = (uint32_t)(uintptr_t)ep_in_ring | 1;
+    ep_in_ctx[3] = hid_ep_maxpkt;
+
+    xhci_send_command(13, (uint32_t)(uintptr_t)input_ctx, (uint32_t)((uintptr_t)input_ctx >> 32), 0, (slot_id << 24), "Configure Endpoint");
+
+    printk("%[O] usb: USB 设备枚举全部完成！\n");
 }
 
-static int usb_hid_kbd_setup(int port) {
-    if (!inited) return -1;
-    kbd_slot = 0; kbd_dci = 0; kbd_enq = 0; kbd_cycle = 1; kbd_ready = 0;
-
-    if (port_reset(port) < 0) return -1;
-
-    // 1. Enable Slot
-    trb_t cmd = {0};
-    cmd.control = (TRB_ENABLE_SLOT << 10) | cmd_cycle;
-    cmd_push(cmd);
-    uint32_t slot = wait_event(TRB_CMD_COMPLETE);
-    if (slot == 0) return -1;
-    kbd_slot = slot;
-
-    // 2. Address Device
-    uint8_t *dev_ctx = (uint8_t *)usb_alloc(2048);
-    for (int i = 0; i < 2048; i++) dev_ctx[i] = 0;
-
-    uint32_t portsc = portsc_read(port);
-    uint32_t port_num = port + 1;
-    uint32_t speed = (portsc >> 10) & 0xF; if (speed == 0) speed = 1;
-
-    uint32_t *slot_ctx = (uint32_t *)dev_ctx;
-    slot_ctx[0] = (1u << 27) | (speed << 20);
-    slot_ctx[1] = (port_num << 16);
-
-    extern trb_t *get_ctrl_ring(void); // 占位, 实际我们需要在 ctrl_transfer 里管理
-
-    // 为了单文件简洁, 我们在这里重新分配一个 EP0 ring
-    trb_t *ep0_ring = (trb_t *)usb_alloc(256 * 16);
-    for (int i = 0; i < 256 * 16; i++) ((uint8_t *)ep0_ring)[i] = 0;
-
-    uint32_t *ep0 = (uint32_t *)(dev_ctx + 32);
-    ep0[1] = (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (3u << 1);
-    ep0[2] = (8u << 16) | (8u << 0);
-    ep0[3] = (uint32_t)(uintptr_t)ep0_ring | 1u;
-
-    trb_t addr_cmd = {0};
-    addr_cmd.param_lo = (uint32_t)(uintptr_t)dev_ctx;
-    addr_cmd.control = (TRB_ADDRESS_DEVICE << 10) | (slot << 24) | (1u << 9) | cmd_cycle;
-    cmd_push(addr_cmd);
-    if (wait_event(TRB_CMD_COMPLETE) == 0) return -1;
-
-    // 3. 获取设备描述符
-    uint8_t dev_desc[18];
-    setup_pkt_t setup = {0x80, 0x06, 0x0100, 0x0000, 18};
-    if (ctrl_transfer(slot, &setup, dev_desc) < 0) return -1;
-
-    // 4. 获取配置描述符
-    cfg_desc = (uint8_t *)usb_alloc(512);
-    setup.wValue = 0x0200; setup.wLength = 9;
-    if (ctrl_transfer(slot, &setup, cfg_desc) < 0) return -1;
-    uint16_t total_len = cfg_desc[2] | (cfg_desc[3] << 8);
-    if (total_len > 512) total_len = 512;
-    setup.wLength = total_len;
-    if (ctrl_transfer(slot, &setup, cfg_desc) < 0) return -1;
-
-    // 5. 查找键盘端点并配置
-    if (!find_kbd_ep()) return -1;
-
-    setup.bmRequestType = 0x00; setup.bRequest = 0x09;
-    setup.wValue = 1; setup.wIndex = 0; setup.wLength = 0;
-    if (ctrl_transfer(slot, &setup, 0) < 0) return -1;
-
-    setup.bmRequestType = 0x21; setup.bRequest = 0x0A;
-    setup.wValue = 0; setup.wIndex = 0; setup.wLength = 0;
-    ctrl_transfer(slot, &setup, 0); // 失败也无妨
-
-    // 6. 配置中断端点
-    kbd_ring = (trb_t *)usb_alloc(256 * 16);
-    kbd_buf = (uint8_t *)usb_alloc(8);
-    for (int i = 0; i < 256 * 16; i++) ((uint8_t *)kbd_ring)[i] = 0;
-
-    uint32_t *ep_ctx = (uint32_t *)(dev_ctx + 32 * (kbd_dci + 1));
-    ep_ctx[1] = (1u << 1) | (1u << 3) | (1u << 4) | (3u << 1);
-    ep_ctx[2] = (8u << 16) | (8u << 0);
-    ep_ctx[3] = (uint32_t)(uintptr_t)kbd_ring | 1u;
-
-    uint8_t *in_ctx = (uint8_t *)usb_alloc(2048);
-    for (int i = 0; i < 2048; i++) in_ctx[i] = 0;
-
-    uint32_t *in_slot = (uint32_t *)in_ctx;
-    in_slot[0] = (1u << 27) | (speed << 20);
-    in_slot[1] = (port_num << 16) | ((kbd_dci + 1) << 27);
-
-    uint32_t *in_ep = (uint32_t *)(in_ctx + 32);
-    in_ep[0] = (kbd_dci << 27);
-    for (int i = 1; i < 5; i++) in_ep[i] = ep_ctx[i];
-
-    trb_t cfg_cmd = {0};
-    cfg_cmd.param_lo = (uint32_t)(uintptr_t)in_ctx;
-    cfg_cmd.control = (TRB_CONFIGURE_EP << 10) | (slot << 24) | (1u << 9) | (kbd_dci << 16) | cmd_cycle;
-    cmd_push(cfg_cmd);
-    if (wait_event(TRB_CMD_COMPLETE) == 0) return -1;
-
-    // 7. 提交第一个 Normal TRB
-    trb_t n = {0};
-    n.param_lo = (uint32_t)(uintptr_t)kbd_buf;
-    n.status = (8u << 17) | (8u << 0);
-    n.control = (TRB_NORMAL << 10) | (1u << 5) | kbd_cycle;
-    kbd_ring[kbd_enq] = n;
-    kbd_enq = (kbd_enq + 1) % 256; if (kbd_enq == 0) kbd_cycle ^= 1;
-    flush_cache(kbd_ring, 256 * 16);
-    doorbell[slot] = kbd_dci;
-
-    kbd_ready = 1;
-    return 0;
-}
-
-// ================= 公开接口 =================
 void usb_init(void) {
     for (int bus = 0; bus < 256; bus++) {
         for (int dev = 0; dev < 32; dev++) {
@@ -433,29 +317,11 @@ void usb_init(void) {
                 uint32_t cls = pci_read32(bus, dev, fn, 0x08);
                 if (((cls >> 24) & 0xFF) == 0x0C && ((cls >> 16) & 0xFF) == 0x03) {
                     uint32_t prog_if = (cls >> 8) & 0xFF;
-                    uint32_t bar0 = pci_read32(bus, dev, fn, 0x10) & 0xFFFFFFF0;
-                    uint32_t cmd = pci_read32(bus, dev, fn, 0x04);
-                    pci_write32(bus, dev, fn, 0x04, cmd | 0x0007); // 开启 Bus Master
-
                     if (prog_if == 0x30) {
-                        printk("%[O] usb: 发现 xHCI\n");
-                        if (xhci_init((volatile uint8_t *)bar0) < 0) return;
-
-                        usb_max_ports = (int)n_ports;
-                        usb_connected_count = 0;
-                        for (int p = 0; p < usb_max_ports && p < 32; p++) {
-                            uint32_t s = portsc_read(p);
-                            usb_port_status[p] = s;
-                            if (s & PORTSC_CCS) usb_connected_count++;
-                        }
-                        printk("%[O] usb: %d 个端口有设备\n", usb_connected_count);
-
-                        int found = 0;
-                        for (int p = 0; p < usb_max_ports; p++) {
-                            if (!(portsc_read(p) & PORTSC_CCS)) continue;
-                            if (usb_hid_kbd_setup(p) == 0) { found = 1; break; }
-                        }
-                        if (!found) printk("%[W] usb: 未找到 HID 键盘\n");
+                        uint32_t bar0 = pci_read32(bus, dev, fn, 0x10) & 0xFFFFFFF0;
+                        uint32_t cmd = pci_read32(bus, dev, fn, 0x04);
+                        pci_write32(bus, dev, fn, 0x04, cmd | 0x0006);
+                        xhci_init((volatile uint8_t *)(uintptr_t)bar0);
                         return;
                     }
                 }
@@ -465,50 +331,42 @@ void usb_init(void) {
 }
 
 void usb_poll(void) {
-    if (!kbd_ready) return;
+    if (slot_id == 0 || xhci_hid_dci == 0) return;
+    for(int i=0; i<8; i++) keyboard_report[i] = 0;
 
-    // 轮询事件环
-    for (;;) {
-        trb_t *ev = &evt_ring[evt_deq];
-        if ((ev->control & 1) != evt_cycle) break;
+    trb_t *trb = &ep_in_ring[0];
+    trb->param_lo = (uint32_t)(uintptr_t)keyboard_report;
+    trb->param_hi = 0;
+    trb->status = hid_ep_maxpkt;
+    trb->control = (1 << 10) | (1 << 5) | 1;
 
-        uint32_t type = (ev->control >> 10) & 0x3F;
-        if (type == TRB_TRANSFER_EVENT) {
-            uint32_t slot = (ev->control >> 24) & 0xFF;
-            uint32_t dci  = (ev->control >> 16) & 0x1F;
-            if (slot == kbd_slot && dci == kbd_dci) {
-                uint8_t key = kbd_buf[2];
-                if (key != 0) {
-                    usb_last_key = (char)key;
-                    // 简单映射
-                    char out = 0;
-                    if (key >= 0x04 && key <= 0x1D) out = 'a' + (key - 0x04);
-                    else if (key >= 0x1E && key <= 0x26) out = '1' + (key - 0x1E);
-                    else if (key == 0x27) out = '0';
-                    else if (key == 0x28) out = '\n';
-                    else if (key == 0x2C) out = ' ';
-                    if (out) printk("%c", out);
-                }
-                // 重新提交 Normal TRB
-                trb_t n = {0};
-                n.param_lo = (uint32_t)(uintptr_t)kbd_buf;
-                n.status = (8u << 17) | (8u << 0);
-                n.control = (TRB_NORMAL << 10) | (1u << 5) | kbd_cycle;
-                kbd_ring[kbd_enq] = n;
-                kbd_enq = (kbd_enq + 1) % 256; if (kbd_enq == 0) kbd_cycle ^= 1;
-                flush_cache(kbd_ring, 256 * 16);
-                doorbell[kbd_slot] = kbd_dci;
-            }
+    xhci_ring_doorbell(slot_id, xhci_hid_dci);
+
+    // 等待中断数据到达
+    volatile uint32_t *intr0 = (volatile uint32_t *)((uint8_t *)xhci_rt + 0x20);
+    for (int i = 0; i < 100000; i++) {
+        trb_t *ev = &event_ring[event_idx];
+        if (ev->control & 1) {
+            ev->control &= ~1;
+            event_idx = (event_idx + 1) % 64;
+            intr0[6] = (uint32_t)(uintptr_t)&event_ring[event_idx] | (1 << 3);
+            break;
         }
+        __asm__ volatile("pause");
+    }
 
-        // 推进事件环
-        evt_deq = (evt_deq + 1) % 256;
-        if (evt_deq == 0) evt_cycle ^= 1;
-        uint64_t erdp = (uint64_t)(uintptr_t)&evt_ring[evt_deq];
-        rt[XHCI_ERDP/4]     = (uint32_t)erdp | (1u << 3);
-        rt[XHCI_ERDP/4 + 1] = (uint32_t)(erdp >> 32);
-
-        // 一次只处理一个按键, 避免覆盖
-        break;
+    if (is_mouse) {
+        int8_t dx = (int8_t)keyboard_report[1];
+        int8_t dy = (int8_t)keyboard_report[2];
+        if (dx != 0 || dy != 0) {
+            usb_last_mouse_dx = dx;
+            usb_last_mouse_dy = dy;
+        }
+    } else {
+        uint8_t keycode = keyboard_report[2];
+        if (keycode >= 4 && keycode <= 29) {
+            usb_last_key = 'a' + (keycode - 4);
+            printk("%c", usb_last_key);
+        }
     }
 }
